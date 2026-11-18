@@ -1,6 +1,7 @@
+import Link from "next/link";
 import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
-import SignOutButton from "@/components/sign-out-button";
+import AppHeader from "@/components/app-header";
 
 export default async function Dashboard() {
   const supabase = await createClient();
@@ -17,15 +18,7 @@ export default async function Dashboard() {
 
   return (
     <div className="min-h-screen">
-      <header className="border-b border-stone-200 bg-white">
-        <div className="mx-auto flex max-w-4xl items-center justify-between px-6 py-4">
-          <span className="font-semibold tracking-tight">Time Ledger</span>
-          <div className="flex items-center gap-4">
-            <span className="text-sm text-stone-500">{user.email}</span>
-            <SignOutButton />
-          </div>
-        </div>
-      </header>
+      <AppHeader email={user.email} />
 
       <main className="mx-auto max-w-4xl px-6 py-12">
         <h1 className="text-2xl font-semibold tracking-tight">
@@ -41,8 +34,14 @@ export default async function Dashboard() {
             168 hours
           </p>
           <p className="mt-4 text-sm text-stone-600">
-            Next: pick which calendars to track and create your first
-            categories.
+            Next:{" "}
+            <Link
+              href="/categories"
+              className="font-medium text-accent hover:underline"
+            >
+              set up your categories
+            </Link>
+            , then pick which calendars to track.
           </p>
         </section>
       </main>
