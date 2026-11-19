@@ -152,6 +152,24 @@ export type Database = {
           },
         ]
       }
+      google_tokens: {
+        Row: {
+          refresh_token: string
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          refresh_token: string
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          refresh_token?: string
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
       tracked_calendars: {
         Row: {
           created_at: string

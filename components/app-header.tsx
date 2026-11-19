@@ -20,6 +20,9 @@ export default function AppHeader({ email }: AppHeaderProps) {
             <Link href="/categories" className="hover:text-stone-900">
               Categories
             </Link>
+            <Link href="/calendars" className="hover:text-stone-900">
+                Calendars
+            </Link>
           </nav>
         </div>
         <div className="flex items-center gap-4">
