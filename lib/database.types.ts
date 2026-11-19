@@ -154,16 +154,22 @@ export type Database = {
       }
       google_tokens: {
         Row: {
+          access_token: string | null
+          access_token_expires_at: string | null
           refresh_token: string
           updated_at: string
           user_id: string
         }
         Insert: {
+          access_token?: string | null
+          access_token_expires_at?: string | null
           refresh_token: string
           updated_at?: string
           user_id: string
         }
         Update: {
+          access_token?: string | null
+          access_token_expires_at?: string | null
           refresh_token?: string
           updated_at?: string
           user_id?: string

@@ -21,7 +21,7 @@ export default function AppHeader({ email }: AppHeaderProps) {
               Categories
             </Link>
             <Link href="/calendars" className="hover:text-stone-900">
-                Calendars
+              Calendars
             </Link>
           </nav>
         </div>
