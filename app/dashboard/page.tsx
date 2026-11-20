@@ -4,14 +4,7 @@ import { createClient } from "@/lib/supabase/server";
 import AppHeader from "@/components/app-header";
 import SignInButton from "@/components/sign-in-button";
 import { syncCurrentWeek, type SyncResult } from "@/lib/sync-events";
-
-function hoursBetween(startAt: string, endAt: string) {
-  return (new Date(endAt).getTime() - new Date(startAt).getTime()) / 3_600_000;
-}
-
-function formatHours(hours: number) {
-  return `${Number(hours.toFixed(2))}h`;
-}
+import { formatHours, hoursBetween } from "@/lib/hours";
 
 export default async function Dashboard() {
   const supabase = await createClient();
@@ -152,10 +145,13 @@ async function ThisWeek({ timeZone, start, end }: ThisWeekProps) {
             {formatHours(totalHours)}
           </p>
         </div>
-        <div className="rounded-xl border border-stone-200 bg-white p-5">
+        <Link
+          href="/inbox"
+          className="rounded-xl border border-stone-200 bg-white p-5 transition-colors hover:border-accent"
+        >
           <p className="text-sm text-stone-500">Need a category</p>
           <p className="mt-1 font-mono text-3xl font-semibold">{uncategorized}</p>
-        </div>
+        </Link>
       </div>
 
       {events.length === 0 ? (
