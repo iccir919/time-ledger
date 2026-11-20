@@ -20,10 +20,16 @@ export type GoogleEvent = {
 
 const FIVE_MINUTES = 5 * 60 * 1000;
 
+// Thrown when Google rejects an access token (HTTP 401)
+export class GoogleAuthError extends Error {}
+
 // Get a Google access token for this user.
 // Reuses the cached one if it's still good; otherwise trades the refresh token for a new one.
 // Returns null if the user needs to reconnect Google.
-export async function getGoogleAccessToken(userId: string) {
+export async function getGoogleAccessToken(
+  userId: string,
+  options: { forceRefresh?: boolean } = {}
+) {
   const admin = createAdminClient();
   const { data, error } = await admin
     .from("google_tokens")
@@ -41,6 +47,7 @@ export async function getGoogleAccessToken(userId: string) {
 
   // Reuse the cached access token if it's good for at least 5 more minutes
   if (
+    !options.forceRefresh &&
     data.access_token &&
     data.access_token_expires_at &&
     new Date(data.access_token_expires_at).getTime() - Date.now() > FIVE_MINUTES
@@ -94,6 +101,10 @@ async function googleGet<T>(accessToken: string, url: string): Promise<T> {
     headers: { Authorization: `Bearer ${accessToken}` },
     cache: "no-store",
   });
+
+  if (response.status === 401) {
+    throw new GoogleAuthError("Google rejected the access token");
+  }
 
   if (!response.ok) {
     throw new Error(`Google Calendar error: ${response.status}`);

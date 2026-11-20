@@ -4,6 +4,7 @@ import {
   getGoogleAccessToken,
   getGoogleTimeZone,
   listGoogleEvents,
+  GoogleAuthError,
   type GoogleEvent,
 } from "@/lib/google";
 import { getCurrentWeek } from "@/lib/week";
@@ -33,8 +34,8 @@ export type SyncResult =
   | { status: "ok"; timeZone: string; week: ReturnType<typeof getCurrentWeek> };
 
 // Import this week's events from every tracked calendar
-export async function syncCurrentWeek(userId: string): Promise<SyncResult> {
-  const accessToken = await getGoogleAccessToken(userId);
+async function syncCurrentWeekOnce(userId: string, forceRefresh = false): Promise<SyncResult> {
+  const accessToken = await getGoogleAccessToken(userId, { forceRefresh });
   if (!accessToken) {
     return { status: "reconnect" };
   }
@@ -110,4 +111,16 @@ export async function syncCurrentWeek(userId: string): Promise<SyncResult> {
   }
 
   return { status: "ok", timeZone, week };
+}
+
+// Sync, and if Google rejects the cached token, clear it and try once more
+export async function syncCurrentWeek(userId: string): Promise<SyncResult> {
+  try {
+    return await syncCurrentWeekOnce(userId);
+  } catch (error) {
+    if (error instanceof GoogleAuthError) {
+      return await syncCurrentWeekOnce(userId, true);
+    }
+    throw error;
+  }
 }

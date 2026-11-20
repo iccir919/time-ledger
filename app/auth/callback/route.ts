@@ -19,6 +19,8 @@ export async function GET(request: Request) {
           user_id: session.user.id,
           refresh_token: session.provider_refresh_token,
           updated_at: new Date().toISOString(),
+          access_token: null,
+          access_token_expires_at: null,
         });
 
         if (tokenError) {
