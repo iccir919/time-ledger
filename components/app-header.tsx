@@ -17,6 +17,9 @@ export default function AppHeader({ email }: AppHeaderProps) {
             <Link href="/dashboard" className="hover:text-stone-900">
               Dashboard
             </Link>
+            <Link href="/budget" className="hover:text-stone-900">
+              Budget
+            </Link>
             <Link href="/categories" className="hover:text-stone-900">
               Categories
             </Link>

@@ -3,7 +3,7 @@ import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import AppHeader from "@/components/app-header";
 import SignInButton from "@/components/sign-in-button";
-import { syncCurrentWeek, type SyncResult } from "@/lib/sync-events";
+import { syncRecentWeeks, type SyncResult } from "@/lib/sync-events";
 import { formatHours, hoursBetween } from "@/lib/hours";
 
 export default async function Dashboard() {
@@ -19,10 +19,10 @@ export default async function Dashboard() {
   const fullName = user.user_metadata.full_name as string | undefined;
   const firstName = fullName?.split(" ")[0] ?? user.email;
 
-  // Pull this week's events from Google. If it fails, still show the page.
+  // Pull recent events from Google. If it fails, still show the page.
   let sync: SyncResult | null = null;
   try {
-    sync = await syncCurrentWeek(user.id);
+    sync = await syncRecentWeeks(user.id);
   } catch (error) {
     console.error("Sync failed:", error);
   }

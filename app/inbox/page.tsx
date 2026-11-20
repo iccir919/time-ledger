@@ -4,7 +4,7 @@ import AppHeader from "@/components/app-header";
 import CategorySelect, { type CategoryGroup } from "@/components/category-select";
 import ReconnectGoogle from "@/components/reconnect-google";
 import { formatHours, hoursBetween } from "@/lib/hours";
-import { syncCurrentWeek, type SyncResult } from "@/lib/sync-events";
+import { syncRecentWeeks, type SyncResult } from "@/lib/sync-events";
 import { assignCategory } from "./actions";
 
 export default async function InboxPage() {
@@ -20,7 +20,7 @@ export default async function InboxPage() {
   // Sync first so the inbox matches Google
   let sync: SyncResult | null = null;
   try {
-    sync = await syncCurrentWeek(user.id);
+    sync = await syncRecentWeeks(user.id);
   } catch (error) {
     console.error("Sync failed:", error);
   }

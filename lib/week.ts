@@ -1,5 +1,5 @@
 import { TZDate } from "@date-fns/tz";
-import { addWeeks, format, startOfWeek } from "date-fns";
+import { addWeeks, format, startOfWeek, subWeeks } from "date-fns";
 
 // The current week, Monday 12:00 AM to the next Monday 12:00 AM, in the given time zone
 export function getCurrentWeek(timeZone: string) {
@@ -11,5 +11,6 @@ export function getCurrentWeek(timeZone: string) {
     start,
     end,
     weekStart: format(start, "yyyy-MM-dd"),
+    previousWeekStart: format(subWeeks(start, 1), "yyyy-MM-dd"),
   };
 }

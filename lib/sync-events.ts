@@ -1,4 +1,5 @@
 import "server-only";
+import { subWeeks } from "date-fns";
 import { createClient } from "@/lib/supabase/server";
 import {
   getGoogleAccessToken,
@@ -33,8 +34,8 @@ export type SyncResult =
   | { status: "reconnect" }
   | { status: "ok"; timeZone: string; week: ReturnType<typeof getCurrentWeek> };
 
-// Import this week's events from every tracked calendar
-async function syncCurrentWeekOnce(userId: string, forceRefresh = false): Promise<SyncResult> {
+// Import this week's and last week's events from every tracked calendar
+async function syncRecentWeeksOnce(userId: string, forceRefresh = false): Promise<SyncResult> {
   const accessToken = await getGoogleAccessToken(userId, { forceRefresh });
   if (!accessToken) {
     return { status: "reconnect" };
@@ -42,6 +43,9 @@ async function syncCurrentWeekOnce(userId: string, forceRefresh = false): Promis
 
   const timeZone = await getGoogleTimeZone(accessToken);
   const week = getCurrentWeek(timeZone);
+
+  // Sync last week too, so skipping a few days doesn't leave gaps
+  const syncStart = subWeeks(week.start, 1);
   const supabase = await createClient();
 
   const { data: calendars, error } = await supabase
@@ -54,16 +58,16 @@ async function syncCurrentWeekOnce(userId: string, forceRefresh = false): Promis
 
   for (const calendar of calendars) {
     const googleEvents = (
-      await listGoogleEvents(accessToken, calendar.google_calendar_id, week.start, week.end)
+      await listGoogleEvents(accessToken, calendar.google_calendar_id, syncStart, week.end)
     ).filter(shouldImport);
 
-    // Events already saved for this calendar that overlap this week
+    // Events already saved for this calendar that overlap the sync range
     const { data: saved, error: savedError } = await supabase
       .from("events")
       .select("id, google_event_id, category_id")
       .eq("tracked_calendar_id", calendar.id)
       .lt("start_at", week.end.toISOString())
-      .gt("end_at", week.start.toISOString());
+      .gt("end_at", syncStart.toISOString());
 
     if (savedError) {
       throw new Error(savedError.message);
@@ -113,13 +117,13 @@ async function syncCurrentWeekOnce(userId: string, forceRefresh = false): Promis
   return { status: "ok", timeZone, week };
 }
 
-// Sync, and if Google rejects the cached token, clear it and try once more
-export async function syncCurrentWeek(userId: string): Promise<SyncResult> {
+// Sync, and if Google rejects the cached token, try once more with a fresh one
+export async function syncRecentWeeks(userId: string): Promise<SyncResult> {
   try {
-    return await syncCurrentWeekOnce(userId);
+    return await syncRecentWeeksOnce(userId);
   } catch (error) {
     if (error instanceof GoogleAuthError) {
-      return await syncCurrentWeekOnce(userId, true);
+      return await syncRecentWeeksOnce(userId, true);
     }
     throw error;
   }
