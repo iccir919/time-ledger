@@ -185,3 +185,25 @@ export async function deleteCategory(formData: FormData) {
 
   revalidatePath("/categories");
 }
+
+export async function updateCategoryColor(formData: FormData) {
+  const id = String(formData.get("id") ?? "");
+  const color = String(formData.get("color") ?? "");
+
+  // Only accept a hex color like #2f6f68
+  if (!id || !/^#[0-9a-f]{6}$/i.test(color)) {
+    return;
+  }
+
+  const supabase = await createClient();
+  const { error } = await supabase
+    .from("categories")
+    .update({ color })
+    .eq("id", id);
+
+  if (error) {
+    throw new Error(error.message);
+  }
+
+  revalidatePath("/categories");
+}

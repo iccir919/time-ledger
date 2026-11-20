@@ -1,6 +1,7 @@
 import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import AppHeader from "@/components/app-header";
+import { categoryColors } from "@/lib/colors";
 import {
   addCategory,
   addGroup,
@@ -9,6 +10,7 @@ import {
   deleteGroup,
   renameCategory,
   renameGroup,
+  updateCategoryColor,
 } from "./actions";
 
 export default async function CategoriesPage() {
@@ -40,7 +42,7 @@ export default async function CategoriesPage() {
         <h1 className="text-2xl font-semibold tracking-tight">Categories</h1>
         <p className="mt-2 text-stone-600">
           The jobs you give your hours. Click a name to rename it, then press
-          Enter to save.
+          Enter to save. Click a color dot to change it.
         </p>
 
         {groups.length === 0 && (
@@ -93,10 +95,35 @@ export default async function CategoriesPage() {
                     key={category.id}
                     className="flex items-center gap-3 px-5 py-2"
                   >
-                    <span
-                      className="size-3 shrink-0 rounded-full"
-                      style={{ backgroundColor: category.color }}
-                    />
+                    {/* Color dot: click it to pick a new color */}
+                    <details className="relative">
+                      <summary
+                        aria-label={`Change color for ${category.name}`}
+                        className="flex size-6 cursor-pointer list-none items-center justify-center rounded-full hover:bg-stone-100 [&::-webkit-details-marker]:hidden"
+                      >
+                        <span
+                          className="size-3 rounded-full"
+                          style={{ backgroundColor: category.color }}
+                        />
+                      </summary>
+                      <div className="absolute left-0 top-8 z-10 grid w-max grid-cols-5 gap-2 rounded-lg border border-stone-200 bg-white p-3 shadow-sm">
+                        {categoryColors.map((color) => (
+                          <form key={color} action={updateCategoryColor}>
+                            <input type="hidden" name="id" value={category.id} />
+                            <input type="hidden" name="color" value={color} />
+                            <button
+                              aria-label={`Use color ${color}`}
+                              className={`size-6 rounded-full transition-transform hover:scale-110 ${
+                                color === category.color
+                                  ? "ring-2 ring-stone-900 ring-offset-2"
+                                  : ""
+                              }`}
+                              style={{ backgroundColor: color }}
+                            />
+                          </form>
+                        ))}
+                      </div>
+                    </details>
                     <form action={renameCategory} className="flex-1">
                       <input type="hidden" name="id" value={category.id} />
                       <input
@@ -126,13 +153,20 @@ export default async function CategoriesPage() {
                 className="flex items-center gap-3 border-t border-stone-100 px-5 py-3"
               >
                 <input type="hidden" name="group_id" value={group.id} />
+                {/* New categories match the last color in their group */}
                 <input
-                  type="color"
+                  type="hidden"
                   name="color"
-                  defaultValue="#2f6f68"
-                  aria-label="Category color"
-                  className="size-6 shrink-0 cursor-pointer rounded border-0 bg-transparent p-0"
+                  value={group.categories.at(-1)?.color ?? categoryColors[0]}
                 />
+                <span className="flex size-6 shrink-0 items-center justify-center">
+                  <span
+                    className="size-3 rounded-full"
+                    style={{
+                      backgroundColor: group.categories.at(-1)?.color ?? categoryColors[0],
+                    }}
+                  />
+                </span>
                 <input
                   name="name"
                   placeholder="Add a category"
