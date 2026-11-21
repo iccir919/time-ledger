@@ -1,29 +1,30 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
+import { addDays, format, parseISO } from "date-fns";
 import { createClient } from "@/lib/supabase/server";
 
 const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 
-// Save planned hours for every category this week
+// Save the whole grid. Each input is named "plan:<categoryId>:<date>".
 export async function savePlan(formData: FormData) {
-  const weekStart = String(formData.get("week_start") ?? "");
-  if (!DATE_PATTERN.test(weekStart)) {
-    return;
-  }
-
-  const rows: { category_id: string; week_start: string; planned_hours: number }[] = [];
+  const rows: { category_id: string; plan_date: string; planned_hours: number }[] = [];
 
   for (const [key, value] of formData.entries()) {
-    if (!key.startsWith("planned:")) {
+    if (!key.startsWith("plan:")) {
       continue;
     }
 
-    // Keep each value between 0 and 168, rounded to 2 decimals
-    const hours = Math.min(168, Math.max(0, Number(value) || 0));
+    const [, categoryId, planDate] = key.split(":");
+    if (!categoryId || !planDate || !DATE_PATTERN.test(planDate)) {
+      continue;
+    }
+
+    // Empty cells save as 0, so clearing a cell removes the plan
+    const hours = Math.min(24, Math.max(0, Number(value) || 0));
     rows.push({
-      category_id: key.slice("planned:".length),
-      week_start: weekStart,
+      category_id: categoryId,
+      plan_date: planDate,
       planned_hours: Math.round(hours * 100) / 100,
     });
   }
@@ -34,8 +35,8 @@ export async function savePlan(formData: FormData) {
 
   const supabase = await createClient();
   const { error } = await supabase
-    .from("weekly_budgets")
-    .upsert(rows, { onConflict: "category_id,week_start" });
+    .from("daily_plans")
+    .upsert(rows, { onConflict: "category_id,plan_date" });
 
   if (error) {
     throw new Error(error.message);
@@ -44,20 +45,22 @@ export async function savePlan(formData: FormData) {
   revalidatePath("/budget");
 }
 
-// Start this week with last week's planned hours
+// Copy last week's plan onto the same weekdays this week
 export async function copyLastWeek(formData: FormData) {
   const weekStart = String(formData.get("week_start") ?? "");
-  const previousWeekStart = String(formData.get("previous_week_start") ?? "");
-
-  if (!DATE_PATTERN.test(weekStart) || !DATE_PATTERN.test(previousWeekStart)) {
+  if (!DATE_PATTERN.test(weekStart)) {
     return;
   }
 
+  const previousWeekStart = format(addDays(parseISO(weekStart), -7), "yyyy-MM-dd");
+
   const supabase = await createClient();
   const { data: previous, error } = await supabase
-    .from("weekly_budgets")
-    .select("category_id, planned_hours")
-    .eq("week_start", previousWeekStart);
+    .from("daily_plans")
+    .select("category_id, plan_date, planned_hours")
+    .gte("plan_date", previousWeekStart)
+    .lt("plan_date", weekStart)
+    .gt("planned_hours", 0);
 
   if (error) {
     throw new Error(error.message);
@@ -67,13 +70,14 @@ export async function copyLastWeek(formData: FormData) {
     return;
   }
 
-  const { error: copyError } = await supabase.from("weekly_budgets").upsert(
+  const { error: copyError } = await supabase.from("daily_plans").upsert(
     previous.map((row) => ({
       category_id: row.category_id,
       planned_hours: row.planned_hours,
-      week_start: weekStart,
+      // Same weekday, one week later
+      plan_date: format(addDays(parseISO(row.plan_date), 7), "yyyy-MM-dd"),
     })),
-    { onConflict: "category_id,week_start", ignoreDuplicates: true }
+    { onConflict: "category_id,plan_date" }
   );
 
   if (copyError) {

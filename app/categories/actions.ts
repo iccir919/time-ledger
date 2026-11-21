@@ -76,7 +76,8 @@ export async function addGroup(formData: FormData) {
 export async function addCategory(formData: FormData) {
   const name = readName(formData);
   const groupId = String(formData.get("group_id") ?? "");
-  const color = String(formData.get("color") ?? "#2f6f68");
+  const rawColor = String(formData.get("color") ?? "");
+  const color = /^#[0-9a-f]{6}$/i.test(rawColor) ? rawColor : "#2f6f68";
 
   if (!name || !groupId) {
     return;

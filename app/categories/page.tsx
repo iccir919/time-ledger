@@ -1,6 +1,7 @@
 import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import AppHeader from "@/components/app-header";
+import ColorPicker from "@/components/color-picker";
 import { categoryColors } from "@/lib/colors";
 import {
   addCategory,
@@ -154,19 +155,10 @@ export default async function CategoriesPage() {
               >
                 <input type="hidden" name="group_id" value={group.id} />
                 {/* New categories match the last color in their group */}
-                <input
-                  type="hidden"
+                <ColorPicker
                   name="color"
-                  value={group.categories.at(-1)?.color ?? categoryColors[0]}
+                  defaultColor={group.categories.at(-1)?.color ?? categoryColors[0]}
                 />
-                <span className="flex size-6 shrink-0 items-center justify-center">
-                  <span
-                    className="size-3 rounded-full"
-                    style={{
-                      backgroundColor: group.categories.at(-1)?.color ?? categoryColors[0],
-                    }}
-                  />
-                </span>
                 <input
                   name="name"
                   placeholder="Add a category"
