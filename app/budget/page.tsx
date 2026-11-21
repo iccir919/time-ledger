@@ -5,11 +5,16 @@ import AppHeader from "@/components/app-header";
 import ReconnectGoogle from "@/components/reconnect-google";
 import { formatHours, hoursWithin } from "@/lib/hours";
 import { syncRecentWeeks, type SyncResult } from "@/lib/sync-events";
-import type { getCurrentWeek } from "@/lib/week";
+import WeekNav from "@/components/week-nav";
+import { getWeekInRange, type Week } from "@/lib/week";
 import { copyLastWeek } from "./actions";
 import WeekGrid from "./week-grid";
 
-export default async function BudgetPage() {
+type BudgetPageProps = {
+  searchParams: Promise<{ week?: string }>;
+};
+
+export default async function BudgetPage({ searchParams }: BudgetPageProps) {
   const supabase = await createClient();
   const {
     data: { user },
@@ -27,6 +32,13 @@ export default async function BudgetPage() {
     console.error("Sync failed:", error);
   }
 
+  // The week being viewed, from the URL (?week=2026-11-23); defaults to this week
+  const { week: weekParam } = await searchParams;
+  const week =
+    sync?.status === "ok"
+      ? getWeekInRange(sync.timeZone, weekParam, { weeksBack: 1, weeksAhead: Infinity })
+      : null;
+
   return (
     <div className="min-h-screen">
       <AppHeader email={user.email} />
@@ -42,7 +54,12 @@ export default async function BudgetPage() {
 
         {sync?.status === "reconnect" && <ReconnectGoogle />}
 
-        {sync?.status === "ok" && <Plan timeZone={sync.timeZone} week={sync.week} />}
+        {sync?.status === "ok" && week && (
+          <>
+            <WeekNav basePath="/budget" week={week} timeZone={sync.timeZone} />
+            <Plan timeZone={sync.timeZone} week={week} />
+          </>
+        )}
       </main>
     </div>
   );
@@ -50,7 +67,7 @@ export default async function BudgetPage() {
 
 type PlanProps = {
   timeZone: string;
-  week: ReturnType<typeof getCurrentWeek>;
+  week: Week;
 };
 
 async function Plan({ timeZone, week }: PlanProps) {
@@ -137,7 +154,6 @@ async function Plan({ timeZone, week }: PlanProps) {
   // Day labels in the user's time zone, e.g. "Mon" and "16"
   const weekdayLabel = new Intl.DateTimeFormat("en-US", { timeZone, weekday: "short" });
   const dayNumberLabel = new Intl.DateTimeFormat("en-US", { timeZone, day: "numeric" });
-  const shortDate = new Intl.DateTimeFormat("en-US", { timeZone, month: "short", day: "numeric" });
 
   const days = week.days.map((day) => ({
     date: day.date,
@@ -147,9 +163,8 @@ async function Plan({ timeZone, week }: PlanProps) {
 
   return (
     <>
-      <p className="mt-2 text-stone-600">
-        Week of {shortDate.format(week.start)} to {shortDate.format(week.days[6].start)}. Plan
-        hours by day; actual hours appear under each cell.
+      <p className="mt-4 text-stone-600">
+        Plan hours by day; actual hours appear under each cell.
       </p>
 
       {showCopyLastWeek && (
@@ -176,8 +191,11 @@ async function Plan({ timeZone, week }: PlanProps) {
 
       {uncategorizedHours > 0 && (
         <p className="mt-6 text-sm text-stone-600">
-          {formatHours(uncategorizedHours)} of events this week still need a category.{" "}
-          <Link href="/inbox" className="font-medium text-accent hover:underline">
+          {formatHours(uncategorizedHours)} of events in this week still need a category.{" "}
+          <Link
+            href={`/inbox?week=${week.weekStart}`}
+            className="font-medium text-accent hover:underline"
+          >
             Sort them in the inbox
           </Link>
         </p>

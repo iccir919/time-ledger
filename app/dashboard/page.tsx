@@ -5,8 +5,14 @@ import AppHeader from "@/components/app-header";
 import SignInButton from "@/components/sign-in-button";
 import { syncRecentWeeks, type SyncResult } from "@/lib/sync-events";
 import { formatHours, hoursBetween } from "@/lib/hours";
+import WeekNav from "@/components/week-nav";
+import { getWeekInRange, type Week } from "@/lib/week";
 
-export default async function Dashboard() {
+type DashboardProps = {
+  searchParams: Promise<{ week?: string }>;
+};
+
+export default async function Dashboard({ searchParams }: DashboardProps) {
   const supabase = await createClient();
   const {
     data: { user },
@@ -27,13 +33,20 @@ export default async function Dashboard() {
     console.error("Sync failed:", error);
   }
 
+  // The week being viewed, from the URL (?week=2026-11-23); defaults to this week
+  const { week: weekParam } = await searchParams;
+  const week =
+    sync?.status === "ok"
+      ? getWeekInRange(sync.timeZone, weekParam, { weeksBack: 1, weeksAhead: 0 })
+      : null;
+
   return (
     <div className="min-h-screen">
       <AppHeader email={user.email} />
 
       <main className="mx-auto max-w-4xl px-6 py-12">
         <h1 className="text-2xl font-semibold tracking-tight">Welcome, {firstName}</h1>
-        <p className="mt-2 text-stone-600">Here&apos;s where this week&apos;s hours are going.</p>
+        <p className="mt-2 text-stone-600">Here&apos;s where your hours are going.</p>
 
         {sync === null && (
           <p className="mt-10 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
@@ -54,22 +67,25 @@ export default async function Dashboard() {
           </section>
         )}
 
-        {sync?.status === "ok" && (
-          <ThisWeek timeZone={sync.timeZone} start={sync.week.start} end={sync.week.end} />
+        {sync?.status === "ok" && week && (
+          <>
+            <WeekNav basePath="/dashboard" week={week} timeZone={sync.timeZone} />
+            <WeekEvents timeZone={sync.timeZone} week={week} />
+          </>
         )}
       </main>
     </div>
   );
 }
 
-type ThisWeekProps = {
+type WeekEventsProps = {
   timeZone: string;
-  start: Date;
-  end: Date;
+  week: Week;
 };
 
-async function ThisWeek({ timeZone, start, end }: ThisWeekProps) {
+async function WeekEvents({ timeZone, week }: WeekEventsProps) {
   const supabase = await createClient();
+  const { start, end } = week;
 
   const [calendarsResult, eventsResult] = await Promise.all([
     supabase.from("tracked_calendars").select("id", { count: "exact", head: true }),
@@ -107,7 +123,6 @@ async function ThisWeek({ timeZone, start, end }: ThisWeekProps) {
   const uncategorized = events.filter((event) => !event.category).length;
 
   // Format dates and times in the user's own time zone
-  const shortDate = new Intl.DateTimeFormat("en-US", { timeZone, month: "short", day: "numeric" });
   const dayLabel = new Intl.DateTimeFormat("en-US", {
     timeZone,
     weekday: "long",
@@ -127,16 +142,9 @@ async function ThisWeek({ timeZone, start, end }: ThisWeekProps) {
     days.set(day, [...(days.get(day) ?? []), event]);
   }
 
-  const lastDay = new Date(end.getTime() - 1);
-
   return (
-    <section className="mt-10">
-      <div className="flex items-baseline justify-between">
-        <h2 className="font-semibold">
-          This week: {shortDate.format(start)} to {shortDate.format(lastDay)}
-        </h2>
-        <p className="text-sm text-stone-500">{timeZone}</p>
-      </div>
+    <section className="mt-6">
+      <p className="text-sm text-stone-500">Times shown in {timeZone}</p>
 
       <div className="mt-4 grid grid-cols-2 gap-4">
         <div className="rounded-xl border border-stone-200 bg-white p-5">
@@ -146,7 +154,7 @@ async function ThisWeek({ timeZone, start, end }: ThisWeekProps) {
           </p>
         </div>
         <Link
-          href="/inbox"
+          href={`/inbox?week=${week.weekStart}`}
           className="rounded-xl border border-stone-200 bg-white p-5 transition-colors hover:border-accent"
         >
           <p className="text-sm text-stone-500">Need a category</p>

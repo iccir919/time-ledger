@@ -5,9 +5,15 @@ import CategorySelect, { type CategoryGroup } from "@/components/category-select
 import ReconnectGoogle from "@/components/reconnect-google";
 import { formatHours, hoursBetween } from "@/lib/hours";
 import { syncRecentWeeks, type SyncResult } from "@/lib/sync-events";
+import WeekNav from "@/components/week-nav";
+import { getWeekInRange } from "@/lib/week";
 import { assignCategory } from "./actions";
 
-export default async function InboxPage() {
+type InboxPageProps = {
+  searchParams: Promise<{ week?: string }>;
+};
+
+export default async function InboxPage({ searchParams }: InboxPageProps) {
   const supabase = await createClient();
   const {
     data: { user },
@@ -25,13 +31,20 @@ export default async function InboxPage() {
     console.error("Sync failed:", error);
   }
 
+  // The week being viewed, from the URL (?week=2026-11-23); defaults to this week
+  const { week: weekParam } = await searchParams;
+  const week =
+    sync?.status === "ok"
+      ? getWeekInRange(sync.timeZone, weekParam, { weeksBack: 1, weeksAhead: 0 })
+      : null;
+
   return (
     <div className="min-h-screen">
       <AppHeader email={user.email} />
 
       <main className="mx-auto max-w-3xl px-6 py-12">
         <h1 className="text-2xl font-semibold tracking-tight">Inbox</h1>
-        <p className="mt-2 text-stone-600">This week&apos;s events that still need a job.</p>
+        <p className="mt-2 text-stone-600">Events that still need a job.</p>
 
         {sync === null && (
           <p className="mt-10 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
@@ -41,8 +54,11 @@ export default async function InboxPage() {
 
         {sync?.status === "reconnect" && <ReconnectGoogle />}
 
-        {sync?.status === "ok" && (
-          <InboxList timeZone={sync.timeZone} start={sync.week.start} end={sync.week.end} />
+        {sync?.status === "ok" && week && (
+          <>
+            <WeekNav basePath="/inbox" week={week} timeZone={sync.timeZone} />
+            <InboxList timeZone={sync.timeZone} start={week.start} end={week.end} />
+          </>
         )}
       </main>
     </div>
@@ -58,7 +74,7 @@ type InboxListProps = {
 async function InboxList({ timeZone, start, end }: InboxListProps) {
   const supabase = await createClient();
 
-  const [eventsResult, groupsResult] = await Promise.all([
+  const [eventsResult, groupsResult, allEventsResult] = await Promise.all([
     supabase
       .from("events")
       .select("id, title, start_at, end_at, calendar:tracked_calendars(name)")
@@ -71,6 +87,12 @@ async function InboxList({ timeZone, start, end }: InboxListProps) {
       .select("id, name, categories(id, name)")
       .order("sort_order")
       .order("sort_order", { referencedTable: "categories" }),
+    // How many events this week has at all, sorted or not
+    supabase
+      .from("events")
+      .select("id", { count: "exact", head: true })
+      .lt("start_at", end.toISOString())
+      .gt("end_at", start.toISOString()),
   ]);
 
   if (eventsResult.error) {
@@ -82,6 +104,18 @@ async function InboxList({ timeZone, start, end }: InboxListProps) {
 
   const events = eventsResult.data;
   const categoryGroups = groupsResult.data;
+
+  // No events at all: don't claim everything is sorted
+  if (!allEventsResult.count) {
+    return (
+      <section className="mt-10 rounded-xl border border-stone-200 bg-white p-8 text-center">
+        <p className="font-semibold">No events in this week yet</p>
+        <p className="mt-2 text-sm text-stone-600">
+          Events from your tracked calendars will show up here.
+        </p>
+      </section>
+    );
+  }
 
   if (events.length === 0) {
     return (
