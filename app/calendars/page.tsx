@@ -55,7 +55,6 @@ export default async function CalendarsPage({ searchParams }: CalendarsPageProps
     listGoogleCalendars(accessToken),
     supabase
       .from("tracked_calendars")
-      .select("google_calendar_id, default_category_id")
       .select("google_calendar_id, name, default_category_id"),
     supabase
 

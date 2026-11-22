@@ -51,7 +51,6 @@ async function syncRecentWeeksOnce(userId: string, forceRefresh = false): Promis
 
   const { data: calendars, error } = await supabase
     .from("tracked_calendars")
-    .select("id, google_calendar_id, default_category_id")
     .select("id, name, google_calendar_id, default_category_id");
 
   if (error) {
