@@ -1,3 +1,5 @@
+import { TZDate } from "@date-fns/tz";
+import { format } from "date-fns";
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/server";
 import { loadPlanBlocks, nameKey, type PlanBlock } from "@/lib/plan-blocks";
@@ -64,22 +66,44 @@ export default async function CalendarView({ userId, timeZone, week }: CalendarV
     planProblem = result.problem;
   }
 
-  // Color plan blocks by the category their title matches
+  // Plan blocks match a category by title, which gives them their color
   const groups = groupsResult.data;
-  const colorByName = new Map(
+  const categoryByName = new Map(
     groups.flatMap((group) =>
-      group.categories.map((category) => [nameKey(category.name), category.color] as const)
+      group.categories.map((category) => [nameKey(category.name), category] as const)
     )
   );
 
-  const planBlocks: CalendarBlock[] = planBlocksFromGoogle.map((block) => ({
-    id: block.id,
-    kind: "plan" as const,
-    title: block.title,
-    color: colorByName.get(nameKey(block.title)) ?? NO_CATEGORY_COLOR,
-    startMs: Date.parse(block.startAt),
-    endMs: Date.parse(block.endAt),
-  }));
+  // A time as the user sees it: the date ("2026-11-24") and the clock time ("19:00")
+  function localParts(ms: number) {
+    const local = new TZDate(ms, timeZone);
+    return { date: format(local, "yyyy-MM-dd"), time: format(local, "HH:mm") };
+  }
+
+  const planBlocks: CalendarBlock[] = planBlocksFromGoogle.map((block) => {
+    const category = categoryByName.get(nameKey(block.title));
+    const startMs = Date.parse(block.startAt);
+    const endMs = Date.parse(block.endAt);
+    const start = localParts(startMs);
+    const end = localParts(endMs);
+
+    return {
+      id: block.id,
+      kind: "plan" as const,
+      title: block.title,
+      color: category?.color ?? NO_CATEGORY_COLOR,
+      startMs,
+      endMs,
+      // What the edit popup starts with. No category when the title doesn't match one.
+      draft: {
+        blockId: block.id,
+        categoryId: category?.id ?? "",
+        date: start.date,
+        start: start.time,
+        end: end.time,
+      },
+    };
+  });
 
   // Day labels in the user's time zone, e.g. "Mon" and "16"
   const weekdayLabel = new Intl.DateTimeFormat("en-US", { timeZone, weekday: "short" });

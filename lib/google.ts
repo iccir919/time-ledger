@@ -244,3 +244,27 @@ export async function insertGoogleEvent(
   );
   return data.id;
 }
+
+// Change an existing event. Only the fields sent are changed. Returns the event's id.
+export async function updateGoogleEvent(
+  accessToken: string,
+  calendarId: string,
+  eventId: string,
+  event: NewGoogleEvent
+) {
+  const data = await googleRequest<{ id: string }>(
+    accessToken,
+    `https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(calendarId)}/events/${encodeURIComponent(eventId)}`,
+    { method: "PATCH", body: event }
+  );
+  return data.id;
+}
+
+// Delete an event. Google answers 410 if it was already deleted.
+export async function deleteGoogleEvent(accessToken: string, calendarId: string, eventId: string) {
+  await googleRequest<void>(
+    accessToken,
+    `https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(calendarId)}/events/${encodeURIComponent(eventId)}`,
+    { method: "DELETE" }
+  );
+}

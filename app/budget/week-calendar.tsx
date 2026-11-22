@@ -2,11 +2,12 @@
 
 import { useCallback, useState, type MouseEvent } from "react";
 import type { CategoryGroup } from "@/components/category-select";
-import AddBlockDialog, { type BlockDraft } from "./add-block-dialog";
+import PlanBlockDialog, { type BlockDraft } from "./plan-block-dialog";
 
 // A week view: one column per day, hours down the side.
 // Each day is split in two: plan blocks on the left, tracked events on the right.
-// Clicking an empty spot opens a popup to add a plan block there.
+// Clicking an empty spot opens a popup to add a plan block there;
+// clicking a plan block opens the same popup to edit or delete it.
 
 const HOUR_HEIGHT = 32; // pixels per hour
 const DAY_HEIGHT = HOUR_HEIGHT * 24;
@@ -19,6 +20,8 @@ export type CalendarBlock = {
   color: string;
   startMs: number;
   endMs: number;
+  // Plan blocks only: what the edit popup starts with
+  draft?: BlockDraft;
 };
 
 export type CalendarDay = {
@@ -91,10 +94,11 @@ function toTime(minutes: number) {
   return `${String(hours).padStart(2, "0")}:${String(minutes % 60).padStart(2, "0")}`;
 }
 
-// A one-hour draft starting at the given minute of the day (kept within the day)
+// A one-hour draft starting at the given minute of the day.
+// A late start like 23:30 ends at 00:30, which the popup reads as the next day.
 function draftAt(date: string, startMinutes: number): BlockDraft {
-  const start = Math.min(startMinutes, 23 * 60);
-  return { date, start: toTime(start), end: start + 60 < 24 * 60 ? toTime(start + 60) : "23:59" };
+  const start = Math.min(startMinutes, 23 * 60 + 30);
+  return { date, start: toTime(start), end: toTime((start + 60) % (24 * 60)) };
 }
 
 function hourLabel(hour: number) {
@@ -109,10 +113,12 @@ function hourLabel(hour: number) {
 type LaneProps = {
   blocks: PlacedBlock[];
   side: "left" | "right";
+  // Called when a block with a draft is clicked; leave out to make blocks read-only
+  onEdit?: (draft: BlockDraft) => void;
 };
 
 // One half of a day column: plan blocks (left) or tracked events (right)
-function Lane({ blocks, side }: LaneProps) {
+function Lane({ blocks, side, onEdit }: LaneProps) {
   return (
     <div
       className={`absolute inset-y-0 ${side === "left" ? "left-0.5 right-1/2 pr-px" : "left-1/2 right-0.5 pl-px"}`}
@@ -120,13 +126,16 @@ function Lane({ blocks, side }: LaneProps) {
       {blocks.map((block) => {
         const width = 100 / block.columns;
         const isPlan = block.kind === "plan";
+        const draft = block.draft;
+        const handleClick = onEdit && draft ? () => onEdit(draft) : undefined;
 
         return (
           <div
             key={block.id}
             data-block
             title={block.title}
-            className="absolute overflow-hidden rounded px-1 py-0.5 text-[10px] leading-tight"
+            onClick={handleClick}
+            className={`absolute overflow-hidden rounded px-1 py-0.5 text-[10px] leading-tight ${handleClick ? "cursor-pointer hover:brightness-95" : "cursor-default"}`}
             style={{
               top: block.top,
               height: block.height,
@@ -159,7 +168,7 @@ export default function WeekCalendar({
   const trackedBlocks = blocks.filter((block) => block.kind === "tracked");
   const hours = Array.from({ length: 24 }, (_, hour) => hour);
 
-  // The block being added, or null when the popup is closed
+  // The block being added or edited, or null when the popup is closed
   const [draft, setDraft] = useState<BlockDraft | null>(null);
   const closeDialog = useCallback(() => setDraft(null), []);
 
@@ -240,7 +249,11 @@ export default function WeekCalendar({
                   />
                 ))}
 
-                <Lane blocks={layoutDay(planBlocks, day)} side="left" />
+                <Lane
+                  blocks={layoutDay(planBlocks, day)}
+                  side="left"
+                  onEdit={canAddBlocks ? setDraft : undefined}
+                />
                 <Lane blocks={layoutDay(trackedBlocks, day)} side="right" />
 
                 {day.date === today && nowMinutes !== null && (
@@ -256,7 +269,7 @@ export default function WeekCalendar({
       </div>
 
       {draft && (
-        <AddBlockDialog
+        <PlanBlockDialog
           draft={draft}
           days={days.map((day) => ({ date: day.date, label: day.label }))}
           groups={groups}
