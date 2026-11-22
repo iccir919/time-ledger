@@ -7,11 +7,19 @@ import { formatHours, hoursWithin } from "@/lib/hours";
 import { syncRecentWeeks, type SyncResult } from "@/lib/sync-events";
 import WeekNav from "@/components/week-nav";
 import { getWeekInRange, type Week } from "@/lib/week";
-import { copyLastWeek } from "./actions";
+import { PLAN_CALENDAR_NAME } from "@/lib/plan-calendar";
+import { copyLastWeek, fillFromPlanCalendar } from "./actions";
+import { createPlanCalendar } from "@/app/calendars/actions";
 import WeekGrid from "./week-grid";
 
 type BudgetPageProps = {
-  searchParams: Promise<{ week?: string }>;
+  searchParams: Promise<{
+    week?: string;
+    filled?: string;
+    unmatched?: string;
+    fill?: string;
+    plan?: string;
+  }>;
 };
 
 export default async function BudgetPage({ searchParams }: BudgetPageProps) {
@@ -33,8 +41,7 @@ export default async function BudgetPage({ searchParams }: BudgetPageProps) {
   }
 
   // The week being viewed, from the URL (?week=2026-11-23); defaults to this week
-  const { week: weekParam } = await searchParams;
-  const week =
+  const { week: weekParam, filled, unmatched, fill, plan } = await searchParams;  const week =
     sync?.status === "ok"
       ? getWeekInRange(sync.timeZone, weekParam, { weeksBack: 1, weeksAhead: Infinity })
       : null;
@@ -57,7 +64,14 @@ export default async function BudgetPage({ searchParams }: BudgetPageProps) {
         {sync?.status === "ok" && week && (
           <>
             <WeekNav basePath="/budget" week={week} timeZone={sync.timeZone} />
-            <Plan timeZone={sync.timeZone} week={week} />
+            <Plan
+              timeZone={sync.timeZone}
+              week={week}
+              filled={filled}
+              unmatched={unmatched}
+              fillProblem={fill}
+              planStatus={plan}
+            />
           </>
         )}
       </main>
@@ -68,35 +82,50 @@ export default async function BudgetPage({ searchParams }: BudgetPageProps) {
 type PlanProps = {
   timeZone: string;
   week: Week;
+  // Set after "Fill from Plan calendar" runs
+  filled?: string;
+  unmatched?: string;
+  fillProblem?: string;
+  // Set after "Create Plan calendar" runs from this page
+  planStatus?: string;
 };
 
-async function Plan({ timeZone, week }: PlanProps) {
+async function Plan({
+  timeZone,
+  week,
+  filled,
+  unmatched,
+  fillProblem,
+  planStatus,
+}: PlanProps) {
   const supabase = await createClient();
   const lastDate = week.days[6].date;
 
-  const [groupsResult, plansResult, previousResult, eventsResult] = await Promise.all([
-    supabase
-      .from("category_groups")
-      .select("id, name, categories(id, name, color)")
-      .order("sort_order")
-      .order("sort_order", { referencedTable: "categories" }),
-    supabase
-      .from("daily_plans")
-      .select("category_id, plan_date, planned_hours")
-      .gte("plan_date", week.weekStart)
-      .lte("plan_date", lastDate),
-    supabase
-      .from("daily_plans")
-      .select("id", { count: "exact", head: true })
-      .gte("plan_date", week.previousWeekStart)
-      .lt("plan_date", week.weekStart)
-      .gt("planned_hours", 0),
-    supabase
-      .from("events")
-      .select("category_id, start_at, end_at")
-      .lt("start_at", week.end.toISOString())
-      .gt("end_at", week.start.toISOString()),
-  ]);
+  const [groupsResult, plansResult, previousResult, eventsResult, settingsResult] =
+    await Promise.all([
+      supabase
+        .from("category_groups")
+        .select("id, name, categories(id, name, color)")
+        .order("sort_order")
+        .order("sort_order", { referencedTable: "categories" }),
+      supabase
+        .from("daily_plans")
+        .select("category_id, plan_date, planned_hours")
+        .gte("plan_date", week.weekStart)
+        .lte("plan_date", lastDate),
+      supabase
+        .from("daily_plans")
+        .select("id", { count: "exact", head: true })
+        .gte("plan_date", week.previousWeekStart)
+        .lt("plan_date", week.weekStart)
+        .gt("planned_hours", 0),
+      supabase
+        .from("events")
+        .select("category_id, start_at, end_at")
+        .lt("start_at", week.end.toISOString())
+        .gt("end_at", week.start.toISOString()),
+      supabase.from("user_settings").select("plan_calendar_id").maybeSingle(),
+    ]);
 
   if (groupsResult.error) {
     throw new Error(groupsResult.error.message);
@@ -106,6 +135,9 @@ async function Plan({ timeZone, week }: PlanProps) {
   }
   if (eventsResult.error) {
     throw new Error(eventsResult.error.message);
+  }
+  if (settingsResult.error) {
+    throw new Error(settingsResult.error.message);
   }
 
   const groups = groupsResult.data;
@@ -148,6 +180,9 @@ async function Plan({ timeZone, week }: PlanProps) {
     }
   }
 
+  const hasPlanCalendar = Boolean(settingsResult.data?.plan_calendar_id);
+  const unmatchedTitles = unmatched ? unmatched.split("|") : [];
+
   const hasPlan = plansResult.data.some((plan) => Number(plan.planned_hours) > 0);
   const showCopyLastWeek = !hasPlan && (previousResult.count ?? 0) > 0;
 
@@ -167,6 +202,76 @@ async function Plan({ timeZone, week }: PlanProps) {
         Plan hours by day; actual hours appear under each cell.
       </p>
 
+      {/* Plan calendar */}
+      {hasPlanCalendar ? (
+        <form
+          action={fillFromPlanCalendar}
+          className="mt-6 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-stone-200 bg-white px-5 py-3"
+        >
+          <input type="hidden" name="week_start" value={week.weekStart} />
+          <p className="text-sm text-stone-600">
+            <span className="font-medium text-stone-900">{PLAN_CALENDAR_NAME}</span>
+            <span className="text-stone-400"> · filling replaces this week&apos;s plan</span>
+          </p>
+          <button className="rounded-md px-3 py-1.5 text-sm font-medium text-accent transition-colors hover:bg-accent-soft">
+            Fill from Plan calendar
+          </button>
+        </form>
+      ) : (
+        <section className="mt-6 flex flex-wrap items-center justify-between gap-4 rounded-xl border border-stone-200 bg-white px-5 py-4">
+          <div className="max-w-md">
+            <p className="text-sm font-medium text-stone-900">Plan with exact times</p>
+            <p className="mt-1 text-sm leading-relaxed text-stone-600">
+              Time Ledger can create a {PLAN_CALENDAR_NAME} calendar in your Google account. Drag
+              blocks onto it, then fill this grid from it.
+            </p>
+          </div>
+          <form action={createPlanCalendar}>
+            <input type="hidden" name="return_to" value={`/budget?week=${week.weekStart}`} />
+            <button className="rounded-lg bg-accent px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-accent-hover">
+              Create Plan calendar
+            </button>
+          </form>
+        </section>
+      )}
+
+      {planStatus === "created" && hasPlanCalendar && (
+        <p className="mt-4 text-sm text-accent">
+          Created. Find {PLAN_CALENDAR_NAME} in Google Calendar and add a few blocks.
+        </p>
+      )}
+
+      {planStatus === "needs_permission" && (
+        <p className="mt-4 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+          Time Ledger needs permission to create its calendar. Sign out, sign back in, and approve
+          the new permission on Google&apos;s screen, then try again.
+        </p>
+      )}
+
+      {fillProblem === "missing" && (
+        <p className="mt-4 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+          Your {PLAN_CALENDAR_NAME} calendar wasn&apos;t found in Google. Create it again on the{" "}
+          <Link href="/calendars" className="font-medium underline">
+            Calendars page
+          </Link>
+          .
+        </p>
+      )}
+
+      {filled && unmatchedTitles.length === 0 && (
+        <p className="mt-4 text-sm text-accent">
+          Filled from your Plan calendar. Adjust any cell, then save.
+        </p>
+      )}
+
+      {filled && unmatchedTitles.length > 0 && (
+        <p className="mt-4 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+          Filled, but these blocks didn&apos;t match a category:{" "}
+          <span className="font-medium">{unmatchedTitles.join(", ")}</span>. Rename the block or
+          the category so they match, then fill again.
+        </p>
+      )}
+
       {showCopyLastWeek && (
         <form
           action={copyLastWeek}
@@ -181,7 +286,7 @@ async function Plan({ timeZone, week }: PlanProps) {
       )}
 
       <WeekGrid
-        key={`${week.weekStart}:${hasPlan}`}
+        key={`${week.weekStart}:${hasPlan}:${filled ?? ""}`}
         groups={groups}
         days={days}
         today={week.today}

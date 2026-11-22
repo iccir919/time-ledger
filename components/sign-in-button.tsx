@@ -13,7 +13,9 @@ export default function SignInButton() {
       provider: "google",
       options: {
         redirectTo: `${window.location.origin}/auth/callback`,
-        scopes: "https://www.googleapis.com/auth/calendar.readonly",
+        // Read all calendars; create and manage only calendars Time Ledger makes
+        scopes:
+          "https://www.googleapis.com/auth/calendar.readonly https://www.googleapis.com/auth/calendar.app.created",
         queryParams: {
           access_type: "offline",
           prompt: "consent",

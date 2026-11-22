@@ -246,6 +246,24 @@ export type Database = {
           },
         ]
       }
+      user_settings: {
+        Row: {
+          plan_calendar_id: string | null
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          plan_calendar_id?: string | null
+          updated_at?: string
+          user_id?: string
+        }
+        Update: {
+          plan_calendar_id?: string | null
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
       weekly_budgets: {
         Row: {
           category_id: string

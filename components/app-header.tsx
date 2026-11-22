@@ -18,7 +18,7 @@ export default function AppHeader({ email }: AppHeaderProps) {
               Dashboard
             </Link>
             <Link href="/budget" className="hover:text-stone-900">
-              Budget
+              Plan
             </Link>
             <Link href="/categories" className="hover:text-stone-900">
               Categories
