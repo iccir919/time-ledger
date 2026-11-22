@@ -1,3 +1,4 @@
+import Link from "next/link";
 import type { TrendRow, TrendWeek } from "@/lib/trends";
 
 type WeeklyTableProps = {
@@ -41,10 +42,10 @@ export default function WeeklyTable({ weeks, rows }: WeeklyTableProps) {
             {rows.map((row) => (
               <tr key={row.id}>
                 <td className="whitespace-nowrap pr-3">
-                  <span className="flex items-center gap-2">
+                  <Link href={`/trends/${row.id}`} className="flex items-center gap-2 hover:underline">
                     <span className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: row.color }} />
                     {row.name}
-                  </span>
+                  </Link>
                 </td>
                 {weeks.map((week, index) => {
                   const hours = row.hours[index];
@@ -77,7 +78,7 @@ export default function WeeklyTable({ weeks, rows }: WeeklyTableProps) {
 
       <p className="mt-4 flex items-center gap-2 text-xs text-stone-500">
         <span className="h-3 w-4 rounded bg-accent-soft" />
-        Goal met that week. Avg counts full weeks only, once there are two.
+        Click a category for details.Goal met that week. Avg counts full weeks only, once there are two. 
       </p>
     </section>
   );
