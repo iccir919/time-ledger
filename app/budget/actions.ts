@@ -13,43 +13,45 @@ import {
 
 const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 
-// Save the week's goals. Each input is named "goal:<categoryId>".
-export async function saveGoals(formData: FormData) {
-  const weekStart = String(formData.get("week_start") ?? "");
-  if (!DATE_PATTERN.test(weekStart)) {
-    return;
-  }
+export type GoalResult = { error?: string };
 
-  const rows: { category_id: string; week_start: string; planned_hours: number }[] = [];
-
-  for (const [key, value] of formData.entries()) {
-    if (!key.startsWith("goal:")) {
-      continue;
-    }
-
-    // Empty goals save as 0. A week has 168 hours.
-    const hours = Math.min(168, Math.max(0, Number(value) || 0));
-    rows.push({
-      category_id: key.slice("goal:".length),
-      week_start: weekStart,
-      planned_hours: Math.round(hours * 100) / 100,
-    });
-  }
-
-  if (rows.length === 0) {
-    return;
+// Save one category's goal for one week. Called as soon as a goal field loses focus.
+// null (an emptied field) removes the goal; 0 is a real goal of zero hours, like a limit.
+export async function saveGoal(
+  weekStart: string,
+  categoryId: string,
+  hours: number | null
+): Promise<GoalResult> {
+  if (!DATE_PATTERN.test(weekStart) || !categoryId || (hours !== null && !Number.isFinite(hours))) {
+    return { error: "Couldn't save that goal." };
   }
 
   const supabase = await createClient();
-  const { error } = await supabase
-    .from("weekly_budgets")
-    .upsert(rows, { onConflict: "category_id,week_start" });
+
+  const { error } =
+    hours === null
+      ? await supabase
+          .from("weekly_budgets")
+          .delete()
+          .eq("category_id", categoryId)
+          .eq("week_start", weekStart)
+      : await supabase.from("weekly_budgets").upsert(
+          {
+            category_id: categoryId,
+            week_start: weekStart,
+            // A week has 168 hours
+            planned_hours: Math.round(Math.min(168, Math.max(0, hours)) * 100) / 100,
+          },
+          { onConflict: "category_id,week_start" }
+        );
 
   if (error) {
-    throw new Error(error.message);
+    console.error("Could not save goal:", error.message);
+    return { error: "Couldn't save. Try again." };
   }
 
   revalidatePath("/budget");
+  return {};
 }
 
 // Start a week with the previous week's goals

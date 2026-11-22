@@ -90,3 +90,14 @@ export function formatWeekRange(week: Week, timeZone: string) {
   const shortDate = new Intl.DateTimeFormat("en-US", { timeZone, month: "short", day: "numeric" });
   return `${shortDate.format(week.start)} to ${shortDate.format(week.days[6].start)}`;
 }
+
+// The 3 days to show on a phone: today with the day before and after.
+// For other weeks: the last 3 days of a past week, the first 3 of a future one.
+export function focusDays(dates: string[], today: string) {
+  const todayIndex = dates.indexOf(today);
+  if (todayIndex === -1) {
+    return today > dates[dates.length - 1] ? dates.slice(-3) : dates.slice(0, 3);
+  }
+  const start = Math.min(Math.max(todayIndex - 1, 0), dates.length - 3);
+  return dates.slice(start, start + 3);
+}

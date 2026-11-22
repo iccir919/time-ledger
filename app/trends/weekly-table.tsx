@@ -78,7 +78,7 @@ export default function WeeklyTable({ weeks, rows }: WeeklyTableProps) {
 
       <p className="mt-4 flex items-center gap-2 text-xs text-stone-500">
         <span className="h-3 w-4 rounded bg-accent-soft" />
-        Click a category for details.Goal met that week. Avg counts full weeks only, once there are two. 
+        Goal met that week. Avg counts full weeks only, once there are two. Click a category for details.
       </p>
     </section>
   );

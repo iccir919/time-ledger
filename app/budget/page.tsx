@@ -6,7 +6,7 @@ import ReconnectGoogle from "@/components/reconnect-google";
 import { formatHours, hoursWithin } from "@/lib/hours";
 import { syncRecentWeeks, type SyncResult } from "@/lib/sync-events";
 import WeekNav from "@/components/week-nav";
-import { getWeekInRange, type Week } from "@/lib/week";
+import { focusDays, getWeekInRange, type Week } from "@/lib/week";
 import { PLAN_CALENDAR_NAME } from "@/lib/plan-calendar";
 import { loadPlanBlocks, nameKey } from "@/lib/plan-blocks";
 import { copyLastWeekGoals } from "./actions";
@@ -73,26 +73,37 @@ export default async function BudgetPage({ searchParams }: BudgetPageProps) {
                 params={view === "calendar" ? { view: "calendar" } : undefined}
               />
 
-              {/* Grid | Calendar tabs */}
-              <nav aria-label="Choose a view" className="mt-4 flex rounded-lg bg-stone-100 p-1 text-sm">
+              {/* Grid | Calendar switch: big, since it's one of the main controls */}
+              <nav
+                aria-label="Choose a view"
+                className="mt-4 grid w-full grid-cols-2 rounded-xl bg-stone-200/70 p-1 sm:w-auto"
+              >
                 <Link
                   href={`/budget?week=${week.weekStart}`}
                   aria-current={view === "grid" ? "page" : undefined}
-                  className={`rounded-md px-3 py-1 ${
-                    view === "grid" ? "bg-white font-medium shadow-sm" : "text-stone-500 hover:text-stone-900"
+                  className={`flex items-center justify-center gap-2 rounded-lg px-6 py-2.5 text-base font-medium transition-colors ${
+                    view === "grid" ? "bg-white text-stone-900 shadow-sm" : "text-stone-500 hover:text-stone-900"
                   }`}
                 >
+                  <svg aria-hidden="true" viewBox="0 0 20 20" className="size-4" fill="none" stroke="currentColor" strokeWidth="1.75">
+                    <rect x="3" y="3" width="6" height="6" rx="1" />
+                    <rect x="11" y="3" width="6" height="6" rx="1" />
+                    <rect x="3" y="11" width="6" height="6" rx="1" />
+                    <rect x="11" y="11" width="6" height="6" rx="1" />
+                  </svg>
                   Grid
                 </Link>
                 <Link
                   href={`/budget?week=${week.weekStart}&view=calendar`}
                   aria-current={view === "calendar" ? "page" : undefined}
-                  className={`rounded-md px-3 py-1 ${
-                    view === "calendar"
-                      ? "bg-white font-medium shadow-sm"
-                      : "text-stone-500 hover:text-stone-900"
+                  className={`flex items-center justify-center gap-2 rounded-lg px-6 py-2.5 text-base font-medium transition-colors ${
+                    view === "calendar" ? "bg-white text-stone-900 shadow-sm" : "text-stone-500 hover:text-stone-900"
                   }`}
                 >
+                  <svg aria-hidden="true" viewBox="0 0 20 20" className="size-4" fill="none" stroke="currentColor" strokeWidth="1.75">
+                    <rect x="3" y="4" width="14" height="13" rx="2" />
+                    <path d="M3 8h14M7 2.5v3M13 2.5v3" />
+                  </svg>
                   Calendar
                 </Link>
               </nav>
@@ -250,11 +261,6 @@ async function Plan({ userId, timeZone, week, planStatus }: PlanProps) {
 
   return (
     <>
-      <p className="mt-4 text-stone-600">
-        {planCalendarId
-          ? "Set a weekly goal for each category. Each day shows planned hours from your Plan calendar over actual hours."
-          : "Set a weekly goal for each category. Each day shows the hours you actually tracked."}
-      </p>
 
       {/* Offer to create a Plan calendar if there isn't one yet */}
       {!planCalendarId && (
@@ -319,15 +325,15 @@ async function Plan({ userId, timeZone, week, planStatus }: PlanProps) {
       )}
 
       <WeekGrid
-        key={`${week.weekStart}:${hasGoals}`}
+        key={week.weekStart}
         weekStart={week.weekStart}
         groups={groups}
         days={days}
+        mobileDates={focusDays(days.map((day) => day.date), week.today)}
         today={week.today}
         goals={goals}
         planned={planned}
         actual={actual}
-        hasPlanCalendar={Boolean(planCalendarId)}
       />
 
       {uncategorizedHours > 0 && (

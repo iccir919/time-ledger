@@ -1,12 +1,13 @@
 "use client";
 
 import { useState } from "react";
-import { useFormStatus } from "react-dom";
 import { formatHours } from "@/lib/hours";
-import { saveGoals } from "./actions";
+import { saveGoal } from "./actions";
 
+// Columns: name, goal, days, week. Phones show 3 days, wider screens all 7.
+// The name column has a max width; the week column takes the leftover space.
 const COLUMNS =
-  "grid grid-cols-[minmax(8rem,1fr)_4rem_repeat(7,3.5rem)_9rem] items-center gap-1";
+  "grid items-center gap-2 grid-cols-[minmax(5.5rem,7rem)_4.5rem_repeat(3,2.75rem)_minmax(7.5rem,1fr)] md:grid-cols-[minmax(8rem,10rem)_5.5rem_repeat(7,minmax(3rem,3.75rem))_minmax(12rem,1fr)]";
 
 type GridDay = {
   date: string;
@@ -24,51 +25,52 @@ type WeekGridProps = {
   weekStart: string;
   groups: GridGroup[];
   days: GridDay[];
+  // The 3 days a phone shows
+  mobileDates: string[];
   today: string;
-  // Typed weekly goals, keyed by category ID
+  // Weekly goals, keyed by category ID. A category with no goal isn't in here; 0 is a real goal.
   goals: Record<string, number>;
   // Planned (from the Plan calendar) and actual (tracked) hours, keyed by "<categoryId>:<date>"
   planned: Record<string, number>;
   actual: Record<string, number>;
-  hasPlanCalendar: boolean;
 };
+
+type SaveStatus = "saving" | "saved" | "error";
 
 function cellKey(categoryId: string, date: string) {
   return `${categoryId}:${date}`;
 }
 
-function SaveButton() {
-  const { pending } = useFormStatus();
-
-  return (
-    <button
-      disabled={pending}
-      className="rounded-lg bg-accent px-4 py-2.5 text-sm font-medium text-white transition-colors hover:bg-accent-hover disabled:opacity-60"
-    >
-      {pending ? "Saving..." : "Save goals"}
-    </button>
-  );
+// 2.25 -> "2.25", 0 -> "–"
+function shortHours(hours: number) {
+  return hours > 0 ? String(Number(hours.toFixed(2))) : "–";
 }
 
-// A thin bar: light part = scheduled, dark part = done, both against the goal
+function goalsAsText(goals: Record<string, number>) {
+  const text: Record<string, string> = {};
+  for (const [categoryId, hours] of Object.entries(goals)) {
+    text[categoryId] = String(hours);
+  }
+  return text;
+}
+
+// A thin bar: solid = done, light = scheduled, both against the goal
 function ProgressBar({
   goal,
   scheduled,
   done,
   color,
-  showScheduled,
 }: {
   goal: number;
   scheduled: number;
   done: number;
   color: string;
-  showScheduled: boolean;
 }) {
   const percent = (hours: number) => `${Math.min(hours / goal, 1) * 100}%`;
 
   return (
-    <div className="relative mt-1 h-1.5 overflow-hidden rounded-full bg-stone-100">
-      {showScheduled && (
+    <div className="relative mt-1.5 h-2 overflow-hidden rounded-full bg-stone-100">
+      {scheduled > 0 && (
         <span
           className="absolute inset-y-0 left-0"
           style={{ width: percent(scheduled), backgroundColor: `${color}55` }}
@@ -82,28 +84,90 @@ function ProgressBar({
   );
 }
 
+// How a week is going, done first. goal is null when there's no goal.
+function WeekSummaryText({
+  goal,
+  done,
+  scheduled,
+}: {
+  goal: number | null;
+  done: number;
+  scheduled: number;
+}) {
+  if (goal === null && done === 0 && scheduled === 0) {
+    return <p className="text-stone-300">–</p>;
+  }
+
+  const over = goal !== null ? done - goal : 0;
+
+  // The second line: how it compares to the goal
+  let status: { text: string; className: string } | null = null;
+  if (goal !== null && goal === 0 && done > 0) {
+    // A goal of 0 is a limit, so anything over it is worth flagging
+    status = { text: `${formatHours(over)} over`, className: "text-amber-700" };
+  } else if (goal !== null && goal > 0 && done >= goal) {
+    status = {
+      text: over > 0 ? `Goal met · ${formatHours(over)} over` : "Goal met",
+      className: "text-accent",
+    };
+  } else if (goal !== null && goal > 0) {
+    status = { text: `${formatHours(goal - done)} to go`, className: "text-stone-500" };
+  }
+
+  return (
+    <>
+      <p className="font-medium text-stone-800">
+        {goal !== null ? `${Number(done.toFixed(2))} of ${formatHours(goal)}` : `${formatHours(done)} done`}
+      </p>
+      {(status || scheduled > 0) && (
+        <p className="text-stone-500">
+          {status && <span className={status.className}>{status.text}</span>}
+          {status && scheduled > 0 && " · "}
+          {scheduled > 0 && `${formatHours(scheduled)} scheduled`}
+        </p>
+      )}
+    </>
+  );
+}
+
 export default function WeekGrid({
   weekStart,
   groups,
   days,
+  mobileDates,
   today,
   goals,
   planned,
   actual,
-  hasPlanCalendar,
 }: WeekGridProps) {
   const categories = groups.flatMap((group) => group.categories);
 
   // Each goal's text, so a field can be empty while you type
-  const [goalText, setGoalText] = useState<Record<string, string>>(() => {
-    const initial: Record<string, string> = {};
-    for (const category of categories) {
-      initial[category.id] = goals[category.id] ? String(goals[category.id]) : "";
-    }
-    return initial;
-  });
+  const [goalText, setGoalText] = useState<Record<string, string>>(() => goalsAsText(goals));
+  const [status, setStatus] = useState<Record<string, SaveStatus>>({});
+  // The goal field being typed in, so new values from the server don't overwrite it
+  const [editingId, setEditingId] = useState<string | null>(null);
 
-  const goalFor = (categoryId: string) => Number(goalText[categoryId]) || 0;
+  // When the server sends new goals (after a save, or "Copy last week's goals"), take them,
+  // except in the field you're typing in. This is React's "adjust state when a prop changes" pattern.
+  const [lastGoals, setLastGoals] = useState(goals);
+  if (goals !== lastGoals) {
+    setLastGoals(goals);
+    setGoalText((current) => {
+      const next = goalsAsText(goals);
+      if (editingId) {
+        next[editingId] = current[editingId] ?? "";
+      }
+      return next;
+    });
+  }
+
+  // null when the field is empty (no goal); 0 is a real goal
+  const goalOrNull = (categoryId: string) => {
+    const text = (goalText[categoryId] ?? "").trim();
+    return text === "" ? null : Math.max(0, Number(text) || 0);
+  };
+  const goalFor = (categoryId: string) => goalOrNull(categoryId) ?? 0;
   const plannedAt = (key: string) => planned[key] ?? 0;
   const actualAt = (key: string) => actual[key] ?? 0;
 
@@ -117,41 +181,77 @@ export default function WeekGrid({
   const scheduledTotal = categories.reduce((sum, c) => sum + weekTotal(c.id, plannedAt), 0);
   const doneTotal = categories.reduce((sum, c) => sum + weekTotal(c.id, actualAt), 0);
 
-  return (
-    <form action={saveGoals} className="mt-8">
-      <input type="hidden" name="week_start" value={weekStart} />
+  // Hide the days a phone doesn't show
+  const dayClass = (date: string) => (mobileDates.includes(date) ? "" : "hidden md:block");
 
-      {/* Summary */}
-      <div className={`grid gap-4 ${hasPlanCalendar ? "grid-cols-3" : "grid-cols-2"}`}>
-        <div className="rounded-xl border border-stone-200 bg-white p-5">
-          <p className="text-sm text-stone-500">Goal</p>
-          <p className="mt-1 font-mono text-3xl font-semibold">{formatHours(goalTotal)}</p>
-        </div>
-        {hasPlanCalendar && (
-          <div className="rounded-xl border border-stone-200 bg-white p-5">
-            <p className="text-sm text-stone-500">Scheduled</p>
-            <p className="mt-1 font-mono text-3xl font-semibold">{formatHours(scheduledTotal)}</p>
+  // Save one goal when its field loses focus, if it changed
+  async function save(categoryId: string) {
+    setEditingId(null);
+    const hours = goalOrNull(categoryId);
+    if (hours === (goals[categoryId] ?? null)) {
+      return;
+    }
+
+    setStatus((current) => ({ ...current, [categoryId]: "saving" }));
+    const result = await saveGoal(weekStart, categoryId, hours);
+    setStatus((current) => ({ ...current, [categoryId]: result.error ? "error" : "saved" }));
+
+    // Let "Saved" show for a moment, then clear it
+    if (!result.error) {
+      setTimeout(() => {
+        setStatus((current) => {
+          if (current[categoryId] !== "saved") {
+            return current;
+          }
+          const next = { ...current };
+          delete next[categoryId];
+          return next;
+        });
+      }, 2000);
+    }
+  }
+
+  return (
+    <div className="mt-6">
+      {/* Summary: done first, then the goal, then scheduled if there's any */}
+      <div className="rounded-xl border border-stone-200 bg-white p-5">
+        <p className="text-sm text-stone-500">Done this week</p>
+        <p className="mt-1 text-3xl font-semibold tabular-nums text-accent">
+          {formatHours(doneTotal)}
+          {goalTotal > 0 && (
+            <span className="ml-2 text-base font-normal text-stone-500">
+              of {formatHours(goalTotal)} goal
+            </span>
+          )}
+        </p>
+        {goalTotal > 0 && (
+          <div className="relative mt-3 h-2 overflow-hidden rounded-full bg-stone-100">
+            <span
+              className="absolute inset-y-0 left-0 bg-accent"
+              style={{ width: `${Math.min(doneTotal / goalTotal, 1) * 100}%` }}
+            />
           </div>
         )}
-        <div className="rounded-xl border border-stone-200 bg-white p-5">
-          <p className="text-sm text-stone-500">Done</p>
-          <p className="mt-1 font-mono text-3xl font-semibold text-accent">
-            {formatHours(doneTotal)}
-          </p>
-        </div>
+        {scheduledTotal > 0 && (
+          <p className="mt-2 text-sm text-stone-500">{formatHours(scheduledTotal)} scheduled</p>
+        )}
       </div>
 
-      {/* Grid. Scrolls sideways on narrow screens. */}
-      <div className="mt-8 overflow-x-auto rounded-xl border border-stone-200 bg-white">
-        <div className="min-w-[48rem] p-3">
+      <p className="mt-6 text-sm text-stone-600">
+        Type a weekly goal for each category. It saves on its own.
+      </p>
+
+      {/* Grid. Scrolls sideways if it still doesn't fit. */}
+      <div className="mt-3 overflow-x-auto rounded-xl border border-stone-200 bg-white">
+        <div className="min-w-[24rem] p-4 md:min-w-[54rem]">
           {/* Headers */}
-          <div className={`${COLUMNS} pb-2 text-xs text-stone-500`}>
+          <div className={`${COLUMNS} pb-2 text-sm text-stone-500`}>
             <span />
-            <span className="text-center">Goal</span>
+            <span className="text-center font-medium text-accent">Goal ✎</span>
             {days.map((day) => (
               <span
                 key={day.date}
-                className={`rounded-md py-1 text-center ${
+                className={`rounded-md py-1 text-center ${dayClass(day.date)} ${
                   day.date === today ? "bg-accent-soft font-semibold text-accent" : ""
                 }`}
               >
@@ -163,16 +263,16 @@ export default function WeekGrid({
 
           {groups.map((group) => (
             <div key={group.id} className="border-t border-stone-100 pt-2">
-              <p className="px-1 pb-1 text-sm font-semibold">{group.name}</p>
+              <p className="px-1 pt-1 text-sm font-semibold">{group.name}</p>
 
               {group.categories.map((category) => {
-                const goal = goalFor(category.id);
+                const goal = goalOrNull(category.id);
                 const scheduled = weekTotal(category.id, plannedAt);
                 const done = weekTotal(category.id, actualAt);
-                const unscheduled = goal - scheduled;
+                const fieldStatus = status[category.id];
 
                 return (
-                  <div key={category.id} className={`${COLUMNS} py-1`}>
+                  <div key={category.id} className={`${COLUMNS} py-2`}>
                     <span className="flex items-center gap-2 px-1 text-sm">
                       <span
                         className="size-2.5 shrink-0 rounded-full"
@@ -181,24 +281,49 @@ export default function WeekGrid({
                       <span className="truncate">{category.name}</span>
                     </span>
 
-                    <input
-                      type="number"
-                      name={`goal:${category.id}`}
-                      value={goalText[category.id] ?? ""}
-                      onChange={(event) =>
-                        setGoalText((current) => ({
-                          ...current,
-                          [category.id]: event.target.value,
-                        }))
-                      }
-                      min={0}
-                      max={168}
-                      step={0.25}
-                      placeholder="–"
-                      aria-label={`Weekly goal for ${category.name}`}
-                      className="w-full rounded border border-stone-200 bg-white px-1 py-0.5 text-right font-mono text-sm outline-none focus:ring-2 focus:ring-accent/30"
-                    />
+                    {/* The goal: tinted and outlined so it reads as something to type in */}
+                    <div className="relative">
+                      <input
+                        type="number"
+                        inputMode="decimal"
+                        value={goalText[category.id] ?? ""}
+                        onChange={(event) =>
+                          setGoalText((current) => ({
+                            ...current,
+                            [category.id]: event.target.value,
+                          }))
+                        }
+                        onFocus={() => setEditingId(category.id)}
+                        onBlur={() => save(category.id)}
+                        onKeyDown={(event) => {
+                          if (event.key === "Enter") {
+                            event.currentTarget.blur();
+                          }
+                        }}
+                        min={0}
+                        max={168}
+                        step={0.25}
+                        placeholder="Set"
+                        aria-label={`Weekly goal for ${category.name}, in hours`}
+                        className={`w-full rounded-md border bg-accent-soft/50 py-1 pl-2 pr-5 text-right text-sm font-medium tabular-nums outline-none placeholder:font-normal placeholder:text-stone-400 focus:bg-white focus:ring-2 focus:ring-accent/30 ${
+                          fieldStatus === "error" ? "border-red-400" : "border-accent/40"
+                        }`}
+                      />
+                      <span className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 text-xs text-stone-400">
+                        h
+                      </span>
+                      {fieldStatus && (
+                        <span
+                          className={`absolute -bottom-3.5 right-0 text-[10px] ${
+                            fieldStatus === "error" ? "text-red-600" : "text-stone-400"
+                          }`}
+                        >
+                          {fieldStatus === "saving" ? "Saving" : fieldStatus === "saved" ? "Saved" : "Not saved"}
+                        </span>
+                      )}
+                    </div>
 
+                    {/* Days: hours done, with the plan underneath when there is one */}
                     {days.map((day) => {
                       const key = cellKey(category.id, day.date);
                       const plan = plannedAt(key);
@@ -208,53 +333,29 @@ export default function WeekGrid({
                       return (
                         <div
                           key={day.date}
-                          className={`rounded-md py-1 text-center font-mono leading-tight ${
-                            day.date === today ? "bg-accent-soft/60" : plan > 0 ? "bg-stone-50" : ""
+                          className={`rounded-md py-1 text-center leading-tight tabular-nums ${dayClass(day.date)} ${
+                            day.date === today ? "bg-accent-soft/60" : ""
                           }`}
                         >
-                          {hasPlanCalendar && (
-                            <p className="text-xs text-stone-900">
-                              {plan > 0 ? Number(plan.toFixed(2)) : "–"}
-                            </p>
-                          )}
                           <p
-                            className={`text-[11px] ${
-                              met ? "font-semibold text-accent" : "text-stone-400"
+                            className={`text-sm ${
+                              met ? "font-semibold text-accent" : spent > 0 ? "text-stone-800" : "text-stone-300"
                             }`}
                           >
-                            {spent > 0 ? Number(spent.toFixed(2)) : "–"}
+                            {shortHours(spent)}
                           </p>
+                          {plan > 0 && (
+                            <p className="text-[11px] text-stone-400">plan {shortHours(plan)}</p>
+                          )}
                         </div>
                       );
                     })}
 
-                    {/* Week: how scheduled and done hours compare to the goal */}
-                    <div className="pl-2 text-[11px] leading-tight text-stone-500">
-                      {hasPlanCalendar ? (
-                        <p>
-                          {goal > 0
-                            ? `${formatHours(scheduled)} of ${formatHours(goal)} scheduled`
-                            : `${formatHours(scheduled)} scheduled`}
-                        </p>
-                      ) : null}
-                      <p>
-                        {!hasPlanCalendar && goal > 0
-                          ? `${formatHours(done)} of ${formatHours(goal)} done`
-                          : `${formatHours(done)} done`}
-                      </p>
-                      {goal > 0 && (
-                        <ProgressBar
-                          goal={goal}
-                          scheduled={scheduled}
-                          done={done}
-                          color={category.color}
-                          showScheduled={hasPlanCalendar}
-                        />
-                      )}
-                      {hasPlanCalendar && goal > 0 && unscheduled > 0 && (
-                        <p className="mt-0.5 text-amber-700">
-                          {formatHours(unscheduled)} not scheduled
-                        </p>
+                    {/* Week: done first, then what's left and what's scheduled */}
+                    <div className="pl-2 text-sm leading-snug">
+                      <WeekSummaryText goal={goal} done={done} scheduled={scheduled} />
+                      {goal !== null && goal > 0 && (
+                        <ProgressBar goal={goal} scheduled={scheduled} done={done} color={category.color} />
                       )}
                     </div>
                   </div>
@@ -266,25 +367,22 @@ export default function WeekGrid({
           {/* Totals per day */}
           <div className={`${COLUMNS} border-t border-stone-200 pt-2 text-sm font-semibold`}>
             <span className="px-1">Total</span>
-            <span className="text-right font-mono text-xs">{formatHours(goalTotal)}</span>
-            {days.map((day) => (
-              <div key={day.date} className="text-center font-mono leading-tight">
-                {hasPlanCalendar && (
-                  <p className="text-xs">{formatHours(dayTotal(day.date, plannedAt))}</p>
-                )}
-                <p className="text-[11px] font-normal text-stone-400">
-                  {formatHours(dayTotal(day.date, actualAt))}
-                </p>
-              </div>
-            ))}
+            <span className="pr-5 text-right text-sm tabular-nums">{formatHours(goalTotal)}</span>
+            {days.map((day) => {
+              const plan = dayTotal(day.date, plannedAt);
+              return (
+                <div key={day.date} className={`text-center leading-tight tabular-nums ${dayClass(day.date)}`}>
+                  <p className="text-sm">{formatHours(dayTotal(day.date, actualAt))}</p>
+                  {plan > 0 && (
+                    <p className="text-[11px] font-normal text-stone-400">plan {formatHours(plan)}</p>
+                  )}
+                </div>
+              );
+            })}
             <span />
           </div>
         </div>
       </div>
-
-      <div className="mt-6">
-        <SaveButton />
-      </div>
-    </form>
+    </div>
   );
 }

@@ -44,6 +44,8 @@ type PlacedBlock = CalendarBlock & {
 type WeekCalendarProps = {
   days: CalendarDay[];
   today: string;
+  // The 3 days a phone shows
+  mobileDates: string[];
   // Minutes since midnight today, for the "now" line; null when today isn't shown
   nowMinutes: number | null;
   blocks: CalendarBlock[];
@@ -158,6 +160,7 @@ function Lane({ blocks, side, onEdit }: LaneProps) {
 export default function WeekCalendar({
   days,
   today,
+  mobileDates,
   nowMinutes,
   blocks,
   canAddBlocks,
@@ -167,6 +170,9 @@ export default function WeekCalendar({
   const planBlocks = blocks.filter((block) => block.kind === "plan");
   const trackedBlocks = blocks.filter((block) => block.kind === "tracked");
   const hours = Array.from({ length: 24 }, (_, hour) => hour);
+
+  // Phones show 3 days; wider screens show all 7
+  const dayClass = (date: string) => (mobileDates.includes(date) ? "" : "hidden md:block");
 
   // The block being added or edited, or null when the popup is closed
   const [draft, setDraft] = useState<BlockDraft | null>(null);
@@ -207,14 +213,14 @@ export default function WeekCalendar({
       )}
 
       <div className="mt-4 overflow-x-auto rounded-xl border border-stone-200 bg-white">
-        <div className="min-w-[46rem]">
+        <div className="md:min-w-[46rem]">
           {/* Day headers */}
-          <div className="grid grid-cols-[3.5rem_repeat(7,1fr)] border-b border-stone-200 text-xs text-stone-500">
+          <div className="grid grid-cols-[3rem_repeat(3,1fr)] md:grid-cols-[3.5rem_repeat(7,1fr)] border-b border-stone-200 text-xs text-stone-500">
             <span />
             {days.map((day) => (
               <div
                 key={day.date}
-                className={`py-2 text-center ${day.date === today ? "font-semibold text-accent" : ""}`}
+                className={`py-2 text-center ${dayClass(day.date)} ${day.date === today ? "font-semibold text-accent" : ""}`}
               >
                 {day.weekday} {day.dayNumber}
               </div>
@@ -222,7 +228,7 @@ export default function WeekCalendar({
           </div>
 
           {/* Hours and days */}
-          <div className="grid grid-cols-[3.5rem_repeat(7,1fr)]" style={{ height: DAY_HEIGHT }}>
+          <div className="grid grid-cols-[3rem_repeat(3,1fr)] md:grid-cols-[3.5rem_repeat(7,1fr)]" style={{ height: DAY_HEIGHT }}>
             <div className="relative">
               {hours.map((hour) => (
                 <span
@@ -239,7 +245,7 @@ export default function WeekCalendar({
               <div
                 key={day.date}
                 onClick={(event) => handleDayClick(event, day)}
-                className={`relative border-l border-stone-100 ${day.date === today ? "bg-accent-soft/30" : ""} ${canAddBlocks ? "cursor-pointer" : ""}`}
+                className={`relative border-l border-stone-100 ${dayClass(day.date)} ${day.date === today ? "bg-accent-soft/30" : ""} ${canAddBlocks ? "cursor-pointer" : ""}`}
               >
                 {hours.map((hour) => (
                   <div

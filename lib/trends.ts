@@ -23,7 +23,7 @@ export const WEEKDAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 export type TrendWeek = {
   weekStart: string; // "2026-11-16"
   label: string; // "Nov 16"
-    rangeLabel: string; // "Nov 16 to Nov 22"
+  rangeLabel: string; // "Nov 16 to Nov 22"
   isCurrent: boolean;
 };
 

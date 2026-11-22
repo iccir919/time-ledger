@@ -4,7 +4,7 @@ import Link from "next/link";
 import { createClient } from "@/lib/supabase/server";
 import { loadPlanBlocks, nameKey, type PlanBlock } from "@/lib/plan-blocks";
 import { PLAN_CALENDAR_NAME } from "@/lib/plan-calendar";
-import type { Week } from "@/lib/week";
+import { focusDays, type Week } from "@/lib/week";
 import WeekCalendar, { type CalendarBlock } from "./week-calendar";
 
 // Gray for events without a category and plan blocks that don't match one
@@ -162,6 +162,7 @@ export default async function CalendarView({ userId, timeZone, week }: CalendarV
       <WeekCalendar
         days={days}
         today={week.today}
+        mobileDates={focusDays(days.map((day) => day.date), week.today)}
         nowMinutes={nowMinutes}
         blocks={[...planBlocks, ...trackedBlocks]}
         canAddBlocks={Boolean(planCalendarId)}
