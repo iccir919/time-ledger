@@ -2,6 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
+import { GoogleApiError, insertGoogleEvent, withGoogleAccessToken } from "@/lib/google";
 
 const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 
@@ -82,4 +83,86 @@ export async function copyLastWeekGoals(formData: FormData) {
   }
 
   revalidatePath("/budget");
+}
+
+const TIME_PATTERN = /^\d{2}:\d{2}$/;
+
+export type AddBlockResult = { error?: string };
+
+// Add a block to the Time Ledger Plan calendar.
+// The event is titled with the category's name, so it matches that category.
+export async function createPlanBlock(formData: FormData): Promise<AddBlockResult> {
+  const categoryId = String(formData.get("category_id") ?? "");
+  const date = String(formData.get("date") ?? "");
+  const startTime = String(formData.get("start") ?? "");
+  const endTime = String(formData.get("end") ?? "");
+  const timeZone = String(formData.get("time_zone") ?? "");
+
+  if (!categoryId) {
+    return { error: "Choose a category." };
+  }
+  if (!DATE_PATTERN.test(date) || !TIME_PATTERN.test(startTime) || !TIME_PATTERN.test(endTime)) {
+    return { error: "Choose a day and times." };
+  }
+  // "HH:MM" strings compare correctly as text, e.g. "09:30" < "10:00"
+  if (endTime <= startTime) {
+    return { error: "The end time needs to be after the start time." };
+  }
+
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+
+  if (!user) {
+    return { error: "Sign in again, then try again." };
+  }
+
+  const [settingsResult, categoryResult] = await Promise.all([
+    supabase.from("user_settings").select("plan_calendar_id").maybeSingle(),
+    supabase.from("categories").select("name").eq("id", categoryId).maybeSingle(),
+  ]);
+
+  if (settingsResult.error) {
+    throw new Error(settingsResult.error.message);
+  }
+  if (categoryResult.error) {
+    throw new Error(categoryResult.error.message);
+  }
+
+  const planCalendarId = settingsResult.data?.plan_calendar_id;
+  if (!planCalendarId) {
+    return { error: "Create your Plan calendar first." };
+  }
+  if (!categoryResult.data) {
+    return { error: "That category doesn't exist anymore." };
+  }
+
+  const categoryName = categoryResult.data.name;
+
+  try {
+    const eventId = await withGoogleAccessToken(user.id, (accessToken) =>
+      insertGoogleEvent(accessToken, planCalendarId, {
+        summary: categoryName,
+        start: { dateTime: `${date}T${startTime}:00`, timeZone },
+        end: { dateTime: `${date}T${endTime}:00`, timeZone },
+        extendedProperties: { private: { timeLedgerCategoryId: categoryId } },
+      })
+    );
+
+    if (!eventId) {
+      return { error: "Sign in with Google again, then try again." };
+    }
+  } catch (error) {
+    if (error instanceof GoogleApiError && error.status === 403) {
+      return { error: "Time Ledger needs permission to add events. Sign out and back in." };
+    }
+    if (error instanceof GoogleApiError && error.status === 404) {
+      return { error: "Your Plan calendar wasn't found. Create it again on the Calendars page." };
+    }
+    throw error;
+  }
+
+  revalidatePath("/budget");
+  return {};
 }

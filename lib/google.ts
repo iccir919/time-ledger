@@ -223,3 +223,24 @@ export async function deleteGoogleCalendar(accessToken: string, calendarId: stri
     { method: "DELETE" }
   );
 }
+
+export type NewGoogleEvent = {
+  summary: string;
+  start: { dateTime: string; timeZone: string };
+  end: { dateTime: string; timeZone: string };
+  extendedProperties?: { private?: Record<string, string> };
+};
+
+// Add an event to a calendar. Returns the new event's id.
+export async function insertGoogleEvent(
+  accessToken: string,
+  calendarId: string,
+  event: NewGoogleEvent
+) {
+  const data = await googleRequest<{ id: string }>(
+    accessToken,
+    `https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(calendarId)}/events`,
+    { method: "POST", body: event }
+  );
+  return data.id;
+}

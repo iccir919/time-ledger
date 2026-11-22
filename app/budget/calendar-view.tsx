@@ -18,21 +18,26 @@ type CalendarViewProps = {
 export default async function CalendarView({ userId, timeZone, week }: CalendarViewProps) {
   const supabase = await createClient();
 
-  const [eventsResult, categoriesResult, settingsResult] = await Promise.all([
+  const [eventsResult, groupsResult, settingsResult] = await Promise.all([
     supabase
       .from("events")
       .select("id, title, start_at, end_at, category:categories(name, color)")
       .lt("start_at", week.end.toISOString())
       .gt("end_at", week.start.toISOString()),
-    supabase.from("categories").select("name, color"),
+    // Groups with their categories: the popup's dropdown, and the colors for plan blocks
+    supabase
+      .from("category_groups")
+      .select("id, name, categories(id, name, color)")
+      .order("sort_order")
+      .order("sort_order", { referencedTable: "categories" }),
     supabase.from("user_settings").select("plan_calendar_id").maybeSingle(),
   ]);
 
   if (eventsResult.error) {
     throw new Error(eventsResult.error.message);
   }
-  if (categoriesResult.error) {
-    throw new Error(categoriesResult.error.message);
+  if (groupsResult.error) {
+    throw new Error(groupsResult.error.message);
   }
   if (settingsResult.error) {
     throw new Error(settingsResult.error.message);
@@ -60,8 +65,11 @@ export default async function CalendarView({ userId, timeZone, week }: CalendarV
   }
 
   // Color plan blocks by the category their title matches
+  const groups = groupsResult.data;
   const colorByName = new Map(
-    categoriesResult.data.map((category) => [nameKey(category.name), category.color])
+    groups.flatMap((group) =>
+      group.categories.map((category) => [nameKey(category.name), category.color] as const)
+    )
   );
 
   const planBlocks: CalendarBlock[] = planBlocksFromGoogle.map((block) => ({
@@ -76,11 +84,18 @@ export default async function CalendarView({ userId, timeZone, week }: CalendarV
   // Day labels in the user's time zone, e.g. "Mon" and "16"
   const weekdayLabel = new Intl.DateTimeFormat("en-US", { timeZone, weekday: "short" });
   const dayNumberLabel = new Intl.DateTimeFormat("en-US", { timeZone, day: "numeric" });
+  const fullLabel = new Intl.DateTimeFormat("en-US", {
+    timeZone,
+    weekday: "short",
+    month: "short",
+    day: "numeric",
+  });
 
   const days = week.days.map((day) => ({
     date: day.date,
     weekday: weekdayLabel.format(day.start),
     dayNumber: dayNumberLabel.format(day.start),
+    label: fullLabel.format(day.start),
     startMs: day.start.getTime(),
     endMs: day.end.getTime(),
   }));
@@ -101,6 +116,7 @@ export default async function CalendarView({ userId, timeZone, week }: CalendarV
           Tracked (right)
         </span>
         <span>Times shown in {timeZone}</span>
+        {planCalendarId && <span>Click an empty spot to add a plan block</span>}
       </div>
 
       {!planCalendarId && (
@@ -124,6 +140,9 @@ export default async function CalendarView({ userId, timeZone, week }: CalendarV
         today={week.today}
         nowMinutes={nowMinutes}
         blocks={[...planBlocks, ...trackedBlocks]}
+        canAddBlocks={Boolean(planCalendarId)}
+        groups={groups}
+        timeZone={timeZone}
       />
     </>
   );

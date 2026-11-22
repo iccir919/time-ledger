@@ -17,9 +17,6 @@ import CalendarView from "./calendar-view";
 type BudgetPageProps = {
   searchParams: Promise<{
     week?: string;
-    filled?: string;
-    unmatched?: string;
-    fill?: string;
     plan?: string;
     view?: string;
   }>;
@@ -44,7 +41,7 @@ export default async function BudgetPage({ searchParams }: BudgetPageProps) {
   }
 
   // The week being viewed, from the URL (?week=2026-11-23); defaults to this week
-  const { week: weekParam, filled, unmatched, fill, plan, view: viewParam } = await searchParams;
+  const { week: weekParam, plan, view: viewParam } = await searchParams;
   const view = viewParam === "calendar" ? "calendar" : "grid";
   const week =
     sync?.status === "ok"
