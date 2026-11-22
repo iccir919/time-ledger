@@ -5,6 +5,7 @@ import {
   getGoogleAccessToken,
   getGoogleTimeZone,
   listGoogleEvents,
+  GoogleApiError,
   GoogleAuthError,
   type GoogleEvent,
 } from "@/lib/google";
@@ -50,16 +51,28 @@ async function syncRecentWeeksOnce(userId: string, forceRefresh = false): Promis
 
   const { data: calendars, error } = await supabase
     .from("tracked_calendars")
-    .select("id, google_calendar_id, default_category_id");
+    .select("id, google_calendar_id, default_category_id")
+    .select("id, name, google_calendar_id, default_category_id");
 
   if (error) {
     throw new Error(error.message);
   }
 
   for (const calendar of calendars) {
-    const googleEvents = (
-      await listGoogleEvents(accessToken, calendar.google_calendar_id, syncStart, week.end)
-    ).filter(shouldImport);
+    let googleEvents: GoogleEvent[];
+    try {
+      googleEvents = (
+        await listGoogleEvents(accessToken, calendar.google_calendar_id, syncStart, week.end)
+      ).filter(shouldImport);
+    } catch (error) {
+      // 404 or 410: the calendar was deleted in Google. Skip it so one missing calendar
+      // doesn't stop the whole sync. The Calendars page offers to stop tracking it.
+      if (error instanceof GoogleApiError && (error.status === 404 || error.status === 410)) {
+        console.warn(`Skipping a tracked calendar that no longer exists: ${calendar.name}`);
+        continue;
+      }
+      throw error;
+    }
 
     // Events already saved for this calendar that overlap the sync range
     const { data: saved, error: savedError } = await supabase

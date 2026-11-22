@@ -55,8 +55,10 @@ export default async function CalendarsPage({ searchParams }: CalendarsPageProps
     listGoogleCalendars(accessToken),
     supabase
       .from("tracked_calendars")
-      .select("google_calendar_id, default_category_id"),
+      .select("google_calendar_id, default_category_id")
+      .select("google_calendar_id, name, default_category_id"),
     supabase
+
       .from("category_groups")
       .select("id, name, categories(id, name)")
       .order("sort_order")
@@ -73,6 +75,11 @@ export default async function CalendarsPage({ searchParams }: CalendarsPageProps
   if (settingsResult.error) {
     throw new Error(settingsResult.error.message);
   }
+
+    // Tracked calendars that were deleted in Google. Saving the form stops tracking them.
+  const missingCalendars = trackedResult.data.filter(
+    (row) => !calendars.some((calendar) => calendar.id === row.google_calendar_id)
+  );
 
   // Look up saved choices by Google calendar ID
   const tracked = new Map(
@@ -96,6 +103,15 @@ export default async function CalendarsPage({ searchParams }: CalendarsPageProps
           Check the calendars that count toward your time budget. A default
           category sorts that calendar&apos;s events automatically.
         </p>
+
+        {missingCalendars.length > 0 && (
+          <p className="mt-6 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+            {missingCalendars.length === 1 ? "This calendar was" : "These calendars were"} deleted
+            in Google but {missingCalendars.length === 1 ? "is" : "are"} still being tracked:{" "}
+            <span className="font-medium">{missingCalendars.map((row) => row.name).join(", ")}</span>.
+            Click Save to stop tracking {missingCalendars.length === 1 ? "it" : "them"}.
+          </p>
+        )}
 
         <form action={saveTrackedCalendars} className="mt-10">
           <div className="divide-y divide-stone-100 rounded-xl border border-stone-200 bg-white">
