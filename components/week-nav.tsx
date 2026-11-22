@@ -5,6 +5,8 @@ type WeekNavProps = {
   basePath: string;
   week: NavigableWeek;
   timeZone: string;
+  // Other URL values to keep when changing weeks, e.g. { view: "calendar" }
+  params?: Record<string, string>;
 };
 
 const arrowClass =
@@ -13,12 +15,22 @@ const disabledArrowClass = "cursor-not-allowed rounded-md px-2.5 py-1 text-stone
 
 // "‹ Nov 16 to Nov 22 ›" with a way back to the current week.
 // Arrows turn gray at the edge of the allowed range.
-export default function WeekNav({ basePath, week, timeZone }: WeekNavProps) {
+export default function WeekNav({ basePath, week, timeZone, params }: WeekNavProps) {
+  // Build a link to a week, keeping any extra URL values
+  function weekHref(weekStart?: string) {
+    const search = new URLSearchParams(params);
+    if (weekStart) {
+      search.set("week", weekStart);
+    }
+    const query = search.toString();
+    return query ? `${basePath}?${query}` : basePath;
+  }
+
   return (
     <nav aria-label="Choose a week" className="mt-4 flex items-center gap-1 text-sm">
       {week.canGoBack ? (
         <Link
-          href={`${basePath}?week=${week.previousWeekStart}`}
+          href={weekHref(week.previousWeekStart)}
           aria-label="Previous week"
           className={arrowClass}
         >
@@ -34,7 +46,7 @@ export default function WeekNav({ basePath, week, timeZone }: WeekNavProps) {
 
       {week.canGoForward ? (
         <Link
-          href={`${basePath}?week=${week.nextWeekStart}`}
+          href={weekHref(week.nextWeekStart)}
           aria-label="Next week"
           className={arrowClass}
         >
@@ -51,7 +63,7 @@ export default function WeekNav({ basePath, week, timeZone }: WeekNavProps) {
           This week
         </span>
       ) : (
-        <Link href={basePath} className="ml-2 text-accent hover:underline">
+        <Link href={weekHref()} className="ml-2 text-accent hover:underline">
           Back to this week
         </Link>
       )}
