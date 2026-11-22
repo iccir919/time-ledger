@@ -41,7 +41,8 @@ export default async function BudgetPage({ searchParams }: BudgetPageProps) {
   }
 
   // The week being viewed, from the URL (?week=2026-11-23); defaults to this week
-  const { week: weekParam, filled, unmatched, fill, plan } = await searchParams;  const week =
+  const { week: weekParam, filled, unmatched, fill, plan } = await searchParams;  
+  const week =
     sync?.status === "ok"
       ? getWeekInRange(sync.timeZone, weekParam, { weeksBack: 1, weeksAhead: Infinity })
       : null;
@@ -245,6 +246,12 @@ async function Plan({
         <p className="mt-4 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
           Time Ledger needs permission to create its calendar. Sign out, sign back in, and approve
           the new permission on Google&apos;s screen, then try again.
+        </p>
+      )}
+
+      {fillProblem === "reconnect" && (
+        <p className="mt-4 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+          Couldn&apos;t read your Plan calendar. Sign in with Google again, then try again.
         </p>
       )}
 
