@@ -1,10 +1,11 @@
 "use client";
 
-import { useCallback, useState, type MouseEvent } from "react";
+import { useCallback, useEffect, useRef, useState, type MouseEvent } from "react";
+import Link from "next/link";
 import type { CategoryGroup } from "@/components/category-select";
 import PlanBlockDialog, { type BlockDraft } from "./plan-block-dialog";
 
-// A week view: one column per day, hours down the side.
+// A week view (or a single day): one column per day, hours down the side.
 // Each day is split in two: plan blocks on the left, tracked events on the right.
 // Clicking an empty spot opens a popup to add a plan block there;
 // clicking a plan block opens the same popup to edit or delete it.
@@ -35,6 +36,9 @@ export type CalendarDay = {
 };
 
 type PlacedBlock = CalendarBlock & {
+  // The block's real start and end, before being cut to the day
+  originalStartMs: number;
+  originalEndMs: number;
   top: number;
   height: number;
   column: number;
@@ -53,6 +57,10 @@ type WeekCalendarProps = {
   canAddBlocks: boolean;
   groups: CategoryGroup[];
   timeZone: string;
+  // When set, the calendar is this many pixels tall and scrolls, starting just before now
+  scrollHeight?: number;
+    // Makes the day headers links, e.g. the dashboard's day opens Plan → Calendar
+  headerHref?: string;
 };
 
 // Place one day's blocks: cut them to the day, then put overlapping blocks side by side
@@ -61,6 +69,8 @@ function layoutDay(blocks: CalendarBlock[], day: CalendarDay): PlacedBlock[] {
     .filter((block) => block.startMs < day.endMs && block.endMs > day.startMs)
     .map((block) => ({
       ...block,
+      originalStartMs: block.startMs,
+      originalEndMs: block.endMs,
       startMs: Math.max(block.startMs, day.startMs),
       endMs: Math.min(block.endMs, day.endMs),
     }))
@@ -112,15 +122,20 @@ function hourLabel(hour: number) {
   return `${twelveHour} ${suffix}`;
 }
 
+// Blocks at least this tall have room for a second line with their times
+const TIME_LINE_MIN_HEIGHT = 26;
+
 type LaneProps = {
   blocks: PlacedBlock[];
   side: "left" | "right";
+  // Formats a block's times, e.g. "9:00 – 10:30 AM"
+  timeRange: (startMs: number, endMs: number) => string;
   // Called when a block with a draft is clicked; leave out to make blocks read-only
   onEdit?: (draft: BlockDraft) => void;
 };
 
 // One half of a day column: plan blocks (left) or tracked events (right)
-function Lane({ blocks, side, onEdit }: LaneProps) {
+function Lane({ blocks, side, timeRange, onEdit }: LaneProps) {
   return (
     <div
       className={`absolute inset-y-0 ${side === "left" ? "left-0.5 right-1/2 pr-px" : "left-1/2 right-0.5 pl-px"}`}
@@ -130,12 +145,14 @@ function Lane({ blocks, side, onEdit }: LaneProps) {
         const isPlan = block.kind === "plan";
         const draft = block.draft;
         const handleClick = onEdit && draft ? () => onEdit(draft) : undefined;
+        // The block's own times (not cut to the day), e.g. "11:00 PM – 7:00 AM"
+        const times = timeRange(block.originalStartMs, block.originalEndMs);
 
         return (
           <div
             key={block.id}
             data-block
-            title={block.title}
+            title={`${block.title}, ${times}`}
             onClick={handleClick}
             className={`absolute overflow-hidden rounded px-1 py-0.5 text-[10px] leading-tight ${handleClick ? "cursor-pointer hover:brightness-95" : "cursor-default"}`}
             style={{
@@ -149,7 +166,8 @@ function Lane({ blocks, side, onEdit }: LaneProps) {
               color: isPlan ? "#292524" : "#ffffff",
             }}
           >
-            {block.title}
+            <div className="truncate font-medium">{block.title}</div>
+            {block.height >= TIME_LINE_MIN_HEIGHT && <div className="truncate opacity-75">{times}</div>}
           </div>
         );
       })}
@@ -166,13 +184,35 @@ export default function WeekCalendar({
   canAddBlocks,
   groups,
   timeZone,
+  scrollHeight,
+  headerHref,
 }: WeekCalendarProps) {
   const planBlocks = blocks.filter((block) => block.kind === "plan");
   const trackedBlocks = blocks.filter((block) => block.kind === "tracked");
   const hours = Array.from({ length: 24 }, (_, hour) => hour);
 
-  // Phones show 3 days; wider screens show all 7
+  // "9:00 – 10:30 AM" in the user's time zone
+  const timeFormat = new Intl.DateTimeFormat("en-US", { timeZone, hour: "numeric", minute: "2-digit" });
+  // Swap the thin and narrow spaces Intl uses for normal ones: the server (Node) and the
+  // browser don't always agree on them, which breaks hydration
+  const timeRange = (startMs: number, endMs: number) =>
+    timeFormat.formatRange(startMs, endMs).replace(/[\u2009\u202f]/g, " ");
+
+  // Phones show 3 days; wider screens show all 7. A single day (the dashboard) is one column.
+  const isSingleDay = days.length === 1;
   const dayClass = (date: string) => (mobileDates.includes(date) ? "" : "hidden md:block");
+  const gridColumns = isSingleDay
+    ? "grid-cols-[3.5rem_1fr]"
+    : "grid-cols-[3rem_repeat(3,1fr)] md:grid-cols-[3.5rem_repeat(7,1fr)]";
+
+  // In a scrolling calendar, start an hour before now (or at 8 AM on other days)
+  const scrollRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (scrollHeight && scrollRef.current) {
+      const startMinutes = (nowMinutes ?? 9 * 60) - 60;
+      scrollRef.current.scrollTop = Math.max(0, (startMinutes / 60) * HOUR_HEIGHT);
+    }
+  }, [scrollHeight, nowMinutes]);
 
   // The block being added or edited, or null when the popup is closed
   const [draft, setDraft] = useState<BlockDraft | null>(null);
@@ -212,23 +252,35 @@ export default function WeekCalendar({
         </div>
       )}
 
-      <div className="mt-4 overflow-x-auto rounded-xl border border-stone-200 bg-white">
-        <div className="md:min-w-[46rem]">
-          {/* Day headers */}
-          <div className="grid grid-cols-[3rem_repeat(3,1fr)] md:grid-cols-[3.5rem_repeat(7,1fr)] border-b border-stone-200 text-xs text-stone-500">
+      <div
+        ref={scrollRef}
+        className={`mt-4 overflow-x-auto rounded-xl border border-stone-200 bg-white ${scrollHeight ? "overflow-y-auto" : ""}`}
+        style={scrollHeight ? { maxHeight: scrollHeight } : undefined}
+      >
+        <div className={isSingleDay ? "" : "md:min-w-[46rem]"}>
+          {/* Day headers. They stay at the top while a scrolling calendar scrolls. */}
+          <div className={`sticky top-0 z-20 grid ${gridColumns} border-b border-stone-200 bg-white text-xs text-stone-500`}>
             <span />
             {days.map((day) => (
               <div
                 key={day.date}
                 className={`py-2 text-center ${dayClass(day.date)} ${day.date === today ? "font-semibold text-accent" : ""}`}
               >
-                {day.weekday} {day.dayNumber}
+                {headerHref ? (
+                  <Link href={headerHref} className="hover:underline">
+                    {day.weekday} {day.dayNumber}
+                  </Link>
+                ) : (
+                  <>
+                    {day.weekday} {day.dayNumber}
+                  </>
+                )}
               </div>
             ))}
           </div>
 
           {/* Hours and days */}
-          <div className="grid grid-cols-[3rem_repeat(3,1fr)] md:grid-cols-[3.5rem_repeat(7,1fr)]" style={{ height: DAY_HEIGHT }}>
+          <div className={`grid ${gridColumns}`} style={{ height: DAY_HEIGHT }}>
             <div className="relative">
               {hours.map((hour) => (
                 <span
@@ -258,9 +310,10 @@ export default function WeekCalendar({
                 <Lane
                   blocks={layoutDay(planBlocks, day)}
                   side="left"
+                  timeRange={timeRange}
                   onEdit={canAddBlocks ? setDraft : undefined}
                 />
-                <Lane blocks={layoutDay(trackedBlocks, day)} side="right" />
+                <Lane blocks={layoutDay(trackedBlocks, day)} side="right" timeRange={timeRange} />
 
                 {day.date === today && nowMinutes !== null && (
                   <div
