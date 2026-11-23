@@ -1,6 +1,8 @@
 import Link from "next/link";
 import WeekCalendar from "@/app/budget/week-calendar";
+import GoalStatusLabel from "@/components/goal-status-label";
 import { loadCalendarData } from "@/lib/calendar-data";
+import { goalProgress, goalStatus } from "@/lib/goals";
 import { formatHours, hoursWithin } from "@/lib/hours";
 import { createClient } from "@/lib/supabase/server";
 import { loadTrends } from "@/lib/trends";
@@ -14,24 +16,6 @@ type OverviewProps = {
 
 // How tall the Today calendar is before it scrolls (about 12 hours)
 const TODAY_CALENDAR_HEIGHT = 420;
-
-// The week's one status, in the same words as the Plan grid. Plans count only while they're
-// still ahead: once their time passes, the done hours already say what happened.
-function goalStatus(goal: number, done: number, ahead: number) {
-  if (goal === 0) {
-    // A goal of 0 is a limit
-    return done > 0
-      ? { text: `${formatHours(done)} over`, className: "text-amber-700" }
-      : { text: "On track", className: "text-accent" };
-  }
-  if (done >= goal) {
-    return { text: "Goal met", className: "text-accent" };
-  }
-  const needs = goal - done - ahead;
-  return needs > 0
-    ? { text: `Needs ${formatHours(needs)}`, className: "text-amber-700" }
-    : { text: "On track", className: "text-accent" };
-}
 
 // The dashboard: how today and this week are going, at a glance
 export default async function Overview({ userId, timeZone, week }: OverviewProps) {
@@ -108,7 +92,10 @@ export default async function Overview({ userId, timeZone, week }: OverviewProps
       done: doneByCategory.get(category.id) ?? 0,
       ahead: aheadByCategory.get(category.id) ?? 0,
     }));
-  const goalTotal = goalRows.reduce((sum, row) => sum + row.goal, 0);
+  const aheadTotal = [...aheadByCategory.values()].reduce((sum, h) => sum + h, 0);
+  // All goals added up, for the goals card's header (shown only with 2 or more goals).
+  // Each goal counts only up to itself.
+  const progress = goalProgress(goalRows);
 
   // Today: just today's column of the calendar
   const todayDay = calendar.days.find((day) => day.date === week.today)!;
@@ -148,24 +135,7 @@ export default async function Overview({ userId, timeZone, week }: OverviewProps
 
   return (
     <>
-      {/* Top line: today and the whole week at once */}
       <p className="mt-1 text-stone-600">{dateLabel.format(now)}</p>
-      <div className="mt-6">
-        <p className="text-sm text-stone-600">
-          This week:{" "}
-          <span className="font-semibold text-stone-900">{formatHours(doneTotal)} done</span>
-          {goalTotal > 0 && <> of {formatHours(goalTotal)} goal</>}
-        </p>
-        {goalTotal > 0 && (
-          <div className="mt-2 h-2 overflow-hidden rounded-full bg-stone-200">
-            <div
-              className="h-full rounded-full bg-accent"
-              style={{ width: `${Math.min(doneTotal / goalTotal, 1) * 100}%` }}
-            />
-          </div>
-        )}
-      </div>
-
       {/* Where this week went: one bar split by category, biggest first */}
       {spent.length > 0 && (
         <section className="mt-6 rounded-xl border border-stone-200 bg-white p-5">
@@ -175,6 +145,10 @@ export default async function Overview({ userId, timeZone, week }: OverviewProps
               See trends
             </Link>
           </div>
+          <p className="mt-1 text-sm text-stone-500">
+            {formatHours(doneTotal)} done
+            {aheadTotal > 0 && <> · {formatHours(aheadTotal)} planned ahead</>}
+          </p>
           <div className="mt-3 flex h-3 overflow-hidden rounded-full">
             {spent.map((category) => (
               <div
@@ -289,7 +263,16 @@ export default async function Overview({ userId, timeZone, week }: OverviewProps
 
           {/* This week's goals */}
           <section className="rounded-xl border border-stone-200 bg-white p-5">
-            <h2 className="font-semibold">This week&apos;s goals</h2>
+            {/* A quiet total in the header, only when there's more than one goal to add up */}
+            <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
+              <h2 className="font-semibold">This week&apos;s goals</h2>
+              {progress && progress.count > 1 && (
+                <p className="text-sm text-stone-500">
+                  <span className="font-medium text-stone-900">{Number(progress.done.toFixed(2))}</span> of{" "}
+                  {formatHours(progress.total)}
+                </p>
+              )}
+            </div>
 
             {goalRows.length === 0 ? (
               <p className="mt-3 text-sm text-stone-500">
@@ -302,8 +285,10 @@ export default async function Overview({ userId, timeZone, week }: OverviewProps
               <ul className="mt-3 space-y-3">
                 {goalRows.map((row) => {
                   const status = goalStatus(row.goal, row.done, row.ahead);
+                  const isLimit = row.goal === 0;
                   return (
                     <li key={row.id} className="text-sm">
+                      {/* Name and numbers, then the bar, then the status: one line each */}
                       <div className="flex items-center justify-between gap-3">
                         <span className="flex items-center gap-2 truncate">
                           <span
@@ -312,32 +297,40 @@ export default async function Overview({ userId, timeZone, week }: OverviewProps
                           />
                           {row.name}
                         </span>
-                        <span className="shrink-0">
-                          <span className="text-stone-500">
-                            {Number(row.done.toFixed(2))} of {formatHours(row.goal)} ·{" "}
-                          </span>
-                          <span className={status.className}>{status.text}</span>
+                        <span className="shrink-0 tabular-nums">
+                          {isLimit ? (
+                            <>
+                              {formatHours(row.done)}
+                              <span className="text-stone-500"> · limit 0h</span>
+                            </>
+                          ) : (
+                            <>
+                              {Number(row.done.toFixed(2))}
+                              <span className="text-stone-500"> of {formatHours(row.goal)}</span>
+                            </>
+                          )}
                         </span>
                       </div>
-                      {/* Solid = done, light = planned ahead, both against the goal */}
-                      <div className="mt-1.5 flex h-2 overflow-hidden rounded-full bg-stone-100">
-                        {row.goal > 0 && (
-                          <>
-                            <span
-                              style={{
-                                width: `${Math.min(row.done / row.goal, 1) * 100}%`,
-                                backgroundColor: row.color,
-                              }}
-                            />
-                            <span
-                              style={{
-                                width: `${Math.min(row.ahead / row.goal, 1) * 100}%`,
-                                backgroundColor: `${row.color}55`,
-                              }}
-                            />
-                          </>
-                        )}
-                      </div>
+                      {/* Solid = done, light = planned ahead. No bar for a limit: it can't fill. */}
+                      {!isLimit && (
+                        <div className="mt-1.5 flex h-2 overflow-hidden rounded-full bg-stone-100">
+                          <span
+                            style={{
+                              width: `${Math.min(row.done / row.goal, 1) * 100}%`,
+                              backgroundColor: row.color,
+                            }}
+                          />
+                          <span
+                            style={{
+                              width: `${Math.min(row.ahead / row.goal, 1) * 100}%`,
+                              backgroundColor: `${row.color}55`,
+                            }}
+                          />
+                        </div>
+                      )}
+                      <p className="mt-1 text-xs">
+                        <GoalStatusLabel status={status} />
+                      </p>
                     </li>
                   );
                 })}

@@ -1,6 +1,8 @@
 "use client";
 
 import { useState } from "react";
+import GoalStatusLabel from "@/components/goal-status-label";
+import { goalProgress, goalStatus } from "@/lib/goals";
 import { formatHours } from "@/lib/hours";
 import { saveGoal } from "./actions";
 
@@ -54,27 +56,6 @@ function goalsAsText(goals: Record<string, number>) {
     text[categoryId] = String(hours);
   }
   return text;
-}
-
-// The week's one status, compared to the goal. Plans count only while they're still ahead:
-// once their time passes, the done hours already say what happened.
-function weekStatus(goal: number | null, done: number, ahead: number) {
-  if (goal === null) {
-    return null;
-  }
-  if (goal === 0) {
-    // A goal of 0 is a limit
-    return done > 0
-      ? { text: `${formatHours(done)} over`, className: "text-amber-700" }
-      : { text: "On track", className: "text-accent" };
-  }
-  if (done >= goal) {
-    return { text: "Goal met", className: "text-accent" };
-  }
-  const needs = goal - done - ahead;
-  return needs > 0
-    ? { text: `Needs ${formatHours(needs)}`, className: "text-amber-700" }
-    : { text: "On track", className: "text-accent" };
 }
 
 // A bar: solid = done, light = planned. Used small in day cells and bigger in the week column.
@@ -152,6 +133,17 @@ export default function WeekGrid({
   const doneTotal = categories.reduce((sum, c) => sum + weekTotal(c.id, actualAt), 0);
   const aheadTotal = categories.reduce((sum, c) => sum + weekTotal(c.id, aheadAt), 0);
 
+  // Progress toward goals, for the header (null when there are no goals)
+  const progress = goalProgress(
+    categories
+      .filter((category) => goalOrNull(category.id) !== null)
+      .map((category) => ({
+        goal: goalFor(category.id),
+        done: weekTotal(category.id, actualAt),
+        ahead: weekTotal(category.id, aheadAt),
+      }))
+  );
+
   // Hide the days a phone doesn't show
   const dayClass = (date: string) => (mobileDates.includes(date) ? "" : "hidden md:block");
   // Dates are "YYYY-MM-DD", so comparing them as text puts them in order
@@ -186,25 +178,40 @@ export default function WeekGrid({
 
   return (
     <div className="mt-6">
-      {/* Summary: done first, then the goal */}
+      {/* Header: two facts (done, planned ahead), then goal progress if there are goals */}
       <div className="rounded-xl border border-stone-200 bg-white p-5">
-        <p className="text-sm text-stone-500">Done this week</p>
-        <p className="mt-1 text-3xl font-semibold tabular-nums text-accent">
-          {formatHours(doneTotal)}
-          {goalTotal > 0 && (
-            <span className="ml-2 text-base font-normal text-stone-500">
-              of {formatHours(goalTotal)} goal
-            </span>
-          )}
-        </p>
-        {goalTotal > 0 && (
-          <Bar
-            done={doneTotal}
-            planned={aheadTotal}
-            total={goalTotal}
-            color="#2f6f68"
-            className="mt-3 h-2"
-          />
+        <div className="flex flex-wrap gap-x-10 gap-y-3">
+          <div>
+            <p className="text-sm text-stone-500">Done</p>
+            <p className="mt-1 text-3xl font-semibold tabular-nums text-accent">{formatHours(doneTotal)}</p>
+          </div>
+          <div>
+            <p className="text-sm text-stone-500">Planned ahead</p>
+            <p className="mt-1 text-3xl font-semibold tabular-nums text-stone-400">
+              {formatHours(aheadTotal)}
+            </p>
+          </div>
+        </div>
+
+        {progress ? (
+          <div className="mt-4">
+            <p className="flex flex-wrap items-center gap-x-3 text-sm text-stone-600">
+              <span>
+                Goals: <span className="font-medium text-stone-900">{Number(progress.done.toFixed(2))}</span> of{" "}
+                {formatHours(progress.total)}
+              </span>
+              <GoalStatusLabel status={progress.status} />
+            </p>
+            <Bar
+              done={progress.done}
+              planned={progress.ahead}
+              total={progress.total}
+              color="#2f6f68"
+              className="mt-2 h-2"
+            />
+          </div>
+        ) : (
+          <p className="mt-4 text-sm text-stone-500">Set a weekly goal below to see your progress here.</p>
         )}
       </div>
 
@@ -244,7 +251,7 @@ export default function WeekGrid({
                 const goal = goalOrNull(category.id);
                 const done = weekTotal(category.id, actualAt);
                 const ahead = weekTotal(category.id, aheadAt);
-                const weekly = weekStatus(goal, done, ahead);
+                const weekly = goal === null ? null : goalStatus(goal, done, ahead);
                 const fieldStatus = status[category.id];
 
                 return (
@@ -313,29 +320,37 @@ export default function WeekGrid({
                       />
                     ))}
 
-                    {/* Week: done of goal and one status, with done + planned ahead as a bar */}
+                    {/* Week: done of goal, the bar, then the status (gray text, colored dot) */}
                     <div className="pl-2 text-sm leading-snug">
                       {goal === null ? (
                         <p className={done > 0 ? "text-stone-600" : "text-stone-300"}>
                           {done > 0 ? `${formatHours(done)} done` : "–"}
+                        </p>
+                      ) : goal === 0 ? (
+                        // A limit: no bar, since a bar toward zero can never fill
+                        <p>
+                          <span className="font-medium text-stone-900">{formatHours(done)}</span>
+                          <span className="text-stone-500"> · limit 0h</span>
                         </p>
                       ) : (
                         <>
                           <p>
                             <span className="font-medium text-stone-900">{Number(done.toFixed(2))}</span>
                             <span className="text-stone-500"> of {formatHours(goal)}</span>
-                            {weekly && <span className={weekly.className}> · {weekly.text}</span>}
                           </p>
-                          {goal > 0 && (
-                            <Bar
-                              done={done}
-                              planned={ahead}
-                              total={goal}
-                              color={category.color}
-                              className="mt-1.5 h-2"
-                            />
-                          )}
+                          <Bar
+                            done={done}
+                            planned={ahead}
+                            total={goal}
+                            color={category.color}
+                            className="mt-1.5 h-2"
+                          />
                         </>
+                      )}
+                      {weekly && (
+                        <p className="mt-1 text-xs">
+                          <GoalStatusLabel status={weekly} />
+                        </p>
                       )}
                     </div>
                   </div>
