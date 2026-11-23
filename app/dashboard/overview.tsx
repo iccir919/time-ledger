@@ -15,22 +15,22 @@ type OverviewProps = {
 // How tall the Today calendar is before it scrolls (about 12 hours)
 const TODAY_CALENDAR_HEIGHT = 420;
 
-// How a category's week compares to its goal, in the same words as the Plan grid
-function goalStatus(goal: number, done: number) {
+// The week's one status, in the same words as the Plan grid. Plans count only while they're
+// still ahead: once their time passes, the done hours already say what happened.
+function goalStatus(goal: number, done: number, ahead: number) {
   if (goal === 0) {
     // A goal of 0 is a limit
     return done > 0
       ? { text: `${formatHours(done)} over`, className: "text-amber-700" }
-      : { text: "On track", className: "text-stone-500" };
+      : { text: "On track", className: "text-accent" };
   }
   if (done >= goal) {
-    const over = done - goal;
-    return {
-      text: over > 0 ? `Goal met · ${formatHours(over)} over` : "Goal met",
-      className: "text-accent",
-    };
+    return { text: "Goal met", className: "text-accent" };
   }
-  return { text: `${Number(done.toFixed(2))} of ${formatHours(goal)}`, className: "text-stone-700" };
+  const needs = goal - done - ahead;
+  return needs > 0
+    ? { text: `Needs ${formatHours(needs)}`, className: "text-amber-700" }
+    : { text: "On track", className: "text-accent" };
 }
 
 // The dashboard: how today and this week are going, at a glance
@@ -85,6 +85,17 @@ export default async function Overview({ userId, timeZone, week }: OverviewProps
     .filter((category) => category.hours > 0)
     .sort((a, b) => b.hours - a.hours);
 
+  // Plan time still ahead this week (after now), per category
+  const aheadByCategory = new Map<string, number>();
+  for (const block of calendar.blocks) {
+    const categoryId = block.draft?.categoryId;
+    if (block.kind === "plan" && categoryId) {
+      const ahead =
+        Math.max(0, Math.min(block.endMs, week.end.getTime()) - Math.max(block.startMs, now)) / 3_600_000;
+      aheadByCategory.set(categoryId, (aheadByCategory.get(categoryId) ?? 0) + ahead);
+    }
+  }
+
   // Goals for categories that have one (0 counts: it's a limit), in category order
   const goalByCategory = new Map(
     goalsResult.data.map((goal) => [goal.category_id, Number(goal.planned_hours)])
@@ -95,6 +106,7 @@ export default async function Overview({ userId, timeZone, week }: OverviewProps
       ...category,
       goal: goalByCategory.get(category.id)!,
       done: doneByCategory.get(category.id) ?? 0,
+      ahead: aheadByCategory.get(category.id) ?? 0,
     }));
   const goalTotal = goalRows.reduce((sum, row) => sum + row.goal, 0);
 
@@ -289,7 +301,7 @@ export default async function Overview({ userId, timeZone, week }: OverviewProps
             ) : (
               <ul className="mt-3 space-y-3">
                 {goalRows.map((row) => {
-                  const status = goalStatus(row.goal, row.done);
+                  const status = goalStatus(row.goal, row.done, row.ahead);
                   return (
                     <li key={row.id} className="text-sm">
                       <div className="flex items-center justify-between gap-3">
@@ -300,17 +312,30 @@ export default async function Overview({ userId, timeZone, week }: OverviewProps
                           />
                           {row.name}
                         </span>
-                        <span className={`shrink-0 ${status.className}`}>{status.text}</span>
+                        <span className="shrink-0">
+                          <span className="text-stone-500">
+                            {Number(row.done.toFixed(2))} of {formatHours(row.goal)} ·{" "}
+                          </span>
+                          <span className={status.className}>{status.text}</span>
+                        </span>
                       </div>
-                      <div className="mt-1.5 h-2 overflow-hidden rounded-full bg-stone-100">
+                      {/* Solid = done, light = planned ahead, both against the goal */}
+                      <div className="mt-1.5 flex h-2 overflow-hidden rounded-full bg-stone-100">
                         {row.goal > 0 && (
-                          <div
-                            className="h-full rounded-full"
-                            style={{
-                              width: `${Math.min(row.done / row.goal, 1) * 100}%`,
-                              backgroundColor: row.color,
-                            }}
-                          />
+                          <>
+                            <span
+                              style={{
+                                width: `${Math.min(row.done / row.goal, 1) * 100}%`,
+                                backgroundColor: row.color,
+                              }}
+                            />
+                            <span
+                              style={{
+                                width: `${Math.min(row.ahead / row.goal, 1) * 100}%`,
+                                backgroundColor: `${row.color}55`,
+                              }}
+                            />
+                          </>
                         )}
                       </div>
                     </li>

@@ -217,6 +217,11 @@ async function Plan({ userId, timeZone, week, planStatus }: PlanProps) {
   // Planned hours per category per day, from the Plan calendar's blocks
   const planCalendarId = settingsResult.data?.plan_calendar_id ?? null;
   const planned: Record<string, number> = {};
+
+  // The part of each day's plan that's still ahead (after now), for "On track" and "Needs"
+  const plannedAhead: Record<string, number> = {};
+  const now = Date.now();
+
   const unmatchedTitles = new Set<string>();
   let planProblem = false;
   let planMissing = false;
@@ -243,6 +248,12 @@ async function Plan({ userId, timeZone, week, planStatus }: PlanProps) {
         if (hours > 0) {
           const key = `${categoryId}:${day.date}`;
           planned[key] = (planned[key] ?? 0) + hours;
+
+          const aheadFrom = new Date(Math.max(now, day.start.getTime()));
+          const ahead = hoursWithin(block.startAt, block.endAt, aheadFrom, day.end);
+          if (ahead > 0) {
+            plannedAhead[key] = (plannedAhead[key] ?? 0) + ahead;
+          }
         }
       }
     }
@@ -337,6 +348,7 @@ async function Plan({ userId, timeZone, week, planStatus }: PlanProps) {
         today={week.today}
         goals={goals}
         planned={planned}
+        plannedAhead={plannedAhead}
         actual={actual}
       />
 

@@ -30,8 +30,10 @@ type WeekGridProps = {
   today: string;
   // Weekly goals, keyed by category ID. A category with no goal isn't in here; 0 is a real goal.
   goals: Record<string, number>;
-  // Planned (from the Plan calendar) and actual (tracked) hours, keyed by "<categoryId>:<date>"
+  // Hours keyed by "<categoryId>:<date>": planned (the whole day's plan),
+  // plannedAhead (the part of that plan still after now), and actual (tracked)
   planned: Record<string, number>;
+  plannedAhead: Record<string, number>;
   actual: Record<string, number>;
 };
 
@@ -54,79 +56,48 @@ function goalsAsText(goals: Record<string, number>) {
   return text;
 }
 
-// A thin bar: solid = done, light = scheduled, both against the goal
-function ProgressBar({
-  goal,
-  scheduled,
-  done,
-  color,
-}: {
-  goal: number;
-  scheduled: number;
-  done: number;
-  color: string;
-}) {
-  const percent = (hours: number) => `${Math.min(hours / goal, 1) * 100}%`;
-
-  return (
-    <div className="relative mt-1.5 h-2 overflow-hidden rounded-full bg-stone-100">
-      {scheduled > 0 && (
-        <span
-          className="absolute inset-y-0 left-0"
-          style={{ width: percent(scheduled), backgroundColor: `${color}55` }}
-        />
-      )}
-      <span
-        className="absolute inset-y-0 left-0"
-        style={{ width: percent(done), backgroundColor: color }}
-      />
-    </div>
-  );
+// The week's one status, compared to the goal. Plans count only while they're still ahead:
+// once their time passes, the done hours already say what happened.
+function weekStatus(goal: number | null, done: number, ahead: number) {
+  if (goal === null) {
+    return null;
+  }
+  if (goal === 0) {
+    // A goal of 0 is a limit
+    return done > 0
+      ? { text: `${formatHours(done)} over`, className: "text-amber-700" }
+      : { text: "On track", className: "text-accent" };
+  }
+  if (done >= goal) {
+    return { text: "Goal met", className: "text-accent" };
+  }
+  const needs = goal - done - ahead;
+  return needs > 0
+    ? { text: `Needs ${formatHours(needs)}`, className: "text-amber-700" }
+    : { text: "On track", className: "text-accent" };
 }
 
-// How a week is going, done first. goal is null when there's no goal.
-function WeekSummaryText({
-  goal,
+// A bar: solid = done, light = planned. Used small in day cells and bigger in the week column.
+function Bar({
   done,
-  scheduled,
+  planned,
+  total,
+  color,
+  className,
 }: {
-  goal: number | null;
   done: number;
-  scheduled: number;
+  planned: number;
+  total: number;
+  color: string;
+  className: string;
 }) {
-  if (goal === null && done === 0 && scheduled === 0) {
-    return <p className="text-stone-300">–</p>;
-  }
-
-  const over = goal !== null ? done - goal : 0;
-
-  // The second line: how it compares to the goal
-  let status: { text: string; className: string } | null = null;
-  if (goal !== null && goal === 0 && done > 0) {
-    // A goal of 0 is a limit, so anything over it is worth flagging
-    status = { text: `${formatHours(over)} over`, className: "text-amber-700" };
-  } else if (goal !== null && goal > 0 && done >= goal) {
-    status = {
-      text: over > 0 ? `Goal met · ${formatHours(over)} over` : "Goal met",
-      className: "text-accent",
-    };
-  } else if (goal !== null && goal > 0) {
-    status = { text: `${formatHours(goal - done)} to go`, className: "text-stone-500" };
-  }
+  const percent = (hours: number) => `${Math.min(hours / total, 1) * 100}%`;
 
   return (
-    <>
-      <p className="font-medium text-stone-800">
-        {goal !== null ? `${Number(done.toFixed(2))} of ${formatHours(goal)}` : `${formatHours(done)} done`}
-      </p>
-      {(status || scheduled > 0) && (
-        <p className="text-stone-500">
-          {status && <span className={status.className}>{status.text}</span>}
-          {status && scheduled > 0 && " · "}
-          {scheduled > 0 && `${formatHours(scheduled)} scheduled`}
-        </p>
-      )}
-    </>
+    <div className={`flex overflow-hidden rounded-full bg-stone-100 ${className}`}>
+      <span style={{ width: percent(done), backgroundColor: color }} />
+      <span style={{ width: percent(planned), backgroundColor: `${color}55` }} />
+    </div>
   );
 }
 
@@ -138,6 +109,7 @@ export default function WeekGrid({
   today,
   goals,
   planned,
+  plannedAhead,
   actual,
 }: WeekGridProps) {
   const categories = groups.flatMap((group) => group.categories);
@@ -168,21 +140,22 @@ export default function WeekGrid({
     return text === "" ? null : Math.max(0, Number(text) || 0);
   };
   const goalFor = (categoryId: string) => goalOrNull(categoryId) ?? 0;
-  const plannedAt = (key: string) => planned[key] ?? 0;
-  const actualAt = (key: string) => actual[key] ?? 0;
+  const read = (values: Record<string, number>) => (key: string) => values[key] ?? 0;
+  const plannedAt = read(planned);
+  const aheadAt = read(plannedAhead);
+  const actualAt = read(actual);
 
-  const weekTotal = (categoryId: string, read: (key: string) => number) =>
-    days.reduce((sum, day) => sum + read(cellKey(categoryId, day.date)), 0);
-
-  const dayTotal = (date: string, read: (key: string) => number) =>
-    categories.reduce((sum, category) => sum + read(cellKey(category.id, date)), 0);
+  const weekTotal = (categoryId: string, at: (key: string) => number) =>
+    days.reduce((sum, day) => sum + at(cellKey(categoryId, day.date)), 0);
 
   const goalTotal = categories.reduce((sum, category) => sum + goalFor(category.id), 0);
-  const scheduledTotal = categories.reduce((sum, c) => sum + weekTotal(c.id, plannedAt), 0);
   const doneTotal = categories.reduce((sum, c) => sum + weekTotal(c.id, actualAt), 0);
+  const aheadTotal = categories.reduce((sum, c) => sum + weekTotal(c.id, aheadAt), 0);
 
   // Hide the days a phone doesn't show
   const dayClass = (date: string) => (mobileDates.includes(date) ? "" : "hidden md:block");
+  // Dates are "YYYY-MM-DD", so comparing them as text puts them in order
+  const isFuture = (date: string) => date > today;
 
   // Save one goal when its field loses focus, if it changed
   async function save(categoryId: string) {
@@ -213,7 +186,7 @@ export default function WeekGrid({
 
   return (
     <div className="mt-6">
-      {/* Summary: done first, then the goal, then scheduled if there's any */}
+      {/* Summary: done first, then the goal */}
       <div className="rounded-xl border border-stone-200 bg-white p-5">
         <p className="text-sm text-stone-500">Done this week</p>
         <p className="mt-1 text-3xl font-semibold tabular-nums text-accent">
@@ -225,21 +198,23 @@ export default function WeekGrid({
           )}
         </p>
         {goalTotal > 0 && (
-          <div className="relative mt-3 h-2 overflow-hidden rounded-full bg-stone-100">
-            <span
-              className="absolute inset-y-0 left-0 bg-accent"
-              style={{ width: `${Math.min(doneTotal / goalTotal, 1) * 100}%` }}
-            />
-          </div>
-        )}
-        {scheduledTotal > 0 && (
-          <p className="mt-2 text-sm text-stone-500">{formatHours(scheduledTotal)} scheduled</p>
+          <Bar
+            done={doneTotal}
+            planned={aheadTotal}
+            total={goalTotal}
+            color="#2f6f68"
+            className="mt-3 h-2"
+          />
         )}
       </div>
 
-      <p className="mt-6 text-sm text-stone-600">
-        Type a weekly goal for each category. It saves on its own.
-      </p>
+      <div className="mt-6 flex flex-wrap items-center gap-x-5 gap-y-1 text-sm text-stone-600">
+        <span>Type a weekly goal for each category. It saves on its own.</span>
+        <span className="flex items-center gap-2 text-xs text-stone-500">
+          <span className="h-1.5 w-4 rounded-full bg-accent" /> done
+          <span className="ml-2 h-1.5 w-4 rounded-full bg-accent/35" /> planned
+        </span>
+      </div>
 
       {/* Grid. Scrolls sideways if it still doesn't fit. */}
       <div className="mt-3 overflow-x-auto rounded-xl border border-stone-200 bg-white">
@@ -267,8 +242,9 @@ export default function WeekGrid({
 
               {group.categories.map((category) => {
                 const goal = goalOrNull(category.id);
-                const scheduled = weekTotal(category.id, plannedAt);
                 const done = weekTotal(category.id, actualAt);
+                const ahead = weekTotal(category.id, aheadAt);
+                const weekly = weekStatus(goal, done, ahead);
                 const fieldStatus = status[category.id];
 
                 return (
@@ -323,39 +299,43 @@ export default function WeekGrid({
                       )}
                     </div>
 
-                    {/* Days: hours done, with the plan underneath when there is one */}
-                    {days.map((day) => {
-                      const key = cellKey(category.id, day.date);
-                      const plan = plannedAt(key);
-                      const spent = actualAt(key);
-                      const met = plan > 0 && spent >= plan;
+                    {/* Days: one number (done, or planned for future days), plus a tiny bar when there's a plan */}
+                    {days.map((day) => (
+                      <DayCell
+                        key={day.date}
+                        label={`${day.weekday} ${day.dayNumber}`}
+                        kind={day.date === today ? "today" : isFuture(day.date) ? "future" : "past"}
+                        done={actualAt(cellKey(category.id, day.date))}
+                        planned={plannedAt(cellKey(category.id, day.date))}
+                        ahead={aheadAt(cellKey(category.id, day.date))}
+                        color={category.color}
+                        className={dayClass(day.date)}
+                      />
+                    ))}
 
-                      return (
-                        <div
-                          key={day.date}
-                          className={`rounded-md py-1 text-center leading-tight tabular-nums ${dayClass(day.date)} ${
-                            day.date === today ? "bg-accent-soft/60" : ""
-                          }`}
-                        >
-                          <p
-                            className={`text-sm ${
-                              met ? "font-semibold text-accent" : spent > 0 ? "text-stone-800" : "text-stone-300"
-                            }`}
-                          >
-                            {shortHours(spent)}
-                          </p>
-                          {plan > 0 && (
-                            <p className="text-[11px] text-stone-400">plan {shortHours(plan)}</p>
-                          )}
-                        </div>
-                      );
-                    })}
-
-                    {/* Week: done first, then what's left and what's scheduled */}
+                    {/* Week: done of goal and one status, with done + planned ahead as a bar */}
                     <div className="pl-2 text-sm leading-snug">
-                      <WeekSummaryText goal={goal} done={done} scheduled={scheduled} />
-                      {goal !== null && goal > 0 && (
-                        <ProgressBar goal={goal} scheduled={scheduled} done={done} color={category.color} />
+                      {goal === null ? (
+                        <p className={done > 0 ? "text-stone-600" : "text-stone-300"}>
+                          {done > 0 ? `${formatHours(done)} done` : "–"}
+                        </p>
+                      ) : (
+                        <>
+                          <p>
+                            <span className="font-medium text-stone-900">{Number(done.toFixed(2))}</span>
+                            <span className="text-stone-500"> of {formatHours(goal)}</span>
+                            {weekly && <span className={weekly.className}> · {weekly.text}</span>}
+                          </p>
+                          {goal > 0 && (
+                            <Bar
+                              done={done}
+                              planned={ahead}
+                              total={goal}
+                              color={category.color}
+                              className="mt-1.5 h-2"
+                            />
+                          )}
+                        </>
                       )}
                     </div>
                   </div>
@@ -364,25 +344,94 @@ export default function WeekGrid({
             </div>
           ))}
 
-          {/* Totals per day */}
+          {/* Totals per day: done, or planned for future days */}
           <div className={`${COLUMNS} border-t border-stone-200 pt-2 text-sm font-semibold`}>
             <span className="px-1">Total</span>
-            <span className="pr-5 text-right text-sm tabular-nums">{formatHours(goalTotal)}</span>
+            <span className="pr-5 text-right tabular-nums">{formatHours(goalTotal)}</span>
             {days.map((day) => {
-              const plan = dayTotal(day.date, plannedAt);
+              const future = isFuture(day.date);
+              const total = categories.reduce(
+                (sum, category) =>
+                  sum + (future ? plannedAt : actualAt)(cellKey(category.id, day.date)),
+                0
+              );
               return (
-                <div key={day.date} className={`text-center leading-tight tabular-nums ${dayClass(day.date)}`}>
-                  <p className="text-sm">{formatHours(dayTotal(day.date, actualAt))}</p>
-                  {plan > 0 && (
-                    <p className="text-[11px] font-normal text-stone-400">plan {formatHours(plan)}</p>
-                  )}
-                </div>
+                <span
+                  key={day.date}
+                  className={`text-center tabular-nums ${dayClass(day.date)} ${future ? "font-normal text-stone-400" : ""}`}
+                >
+                  {total > 0 ? formatHours(total) : "–"}
+                </span>
               );
             })}
             <span />
           </div>
         </div>
       </div>
+    </div>
+  );
+}
+
+type DayCellProps = {
+  label: string;
+  kind: "past" | "today" | "future";
+  done: number;
+  // The whole day's plan, and the part of it still after now
+  planned: number;
+  ahead: number;
+  color: string;
+  className: string;
+};
+
+// One day for one category: a number, plus a tiny bar comparing it to the plan.
+// Hover (or tap) for the exact figures.
+function DayCell({ label, kind, done, planned, ahead, color, className }: DayCellProps) {
+  let number = done;
+  let bar: { done: number; planned: number; total: number } | null = null;
+  let detail = done > 0 ? `${label}: ${formatHours(done)} done` : `${label}: nothing tracked`;
+
+  if (kind === "future") {
+    // Nothing done yet: show what's planned, in gray
+    number = planned;
+    if (planned > 0) {
+      bar = { done: 0, planned, total: planned };
+      detail = `${label}: ${formatHours(planned)} planned`;
+    } else {
+      detail = `${label}: nothing planned`;
+    }
+  } else if (kind === "today" && ahead > 0) {
+    // Done so far, and what's still planned for later today
+    bar = { done, planned: ahead, total: done + ahead };
+    detail = `${label}: ${formatHours(done)} done, ${formatHours(ahead)} still planned`;
+  } else if (planned > 0) {
+    // A past day (or today with nothing left): how much of the plan got done
+    bar = { done: Math.min(done, planned), planned: Math.max(planned - done, 0), total: planned };
+    detail = `${label}: ${formatHours(done)} done of ${formatHours(planned)} planned`;
+  }
+
+  return (
+    <div
+      title={detail}
+      className={`rounded-md px-1 py-1 text-center tabular-nums ${className} ${
+        kind === "today" ? "bg-accent-soft/60" : ""
+      }`}
+    >
+      <p
+        className={`text-sm ${
+          number === 0 ? "text-stone-300" : kind === "future" ? "text-stone-400" : "text-stone-800"
+        }`}
+      >
+        {shortHours(number)}
+      </p>
+      {bar && (
+        <Bar
+          done={bar.done}
+          planned={bar.planned}
+          total={bar.total}
+          color={color}
+          className="mx-auto mt-1 h-1 w-full max-w-10"
+        />
+      )}
     </div>
   );
 }
