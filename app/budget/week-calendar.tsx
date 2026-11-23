@@ -240,18 +240,6 @@ export default function WeekCalendar({
 
   return (
     <>
-      {canAddBlocks && (
-        <div className="mt-4 flex justify-end">
-          <button
-            type="button"
-            onClick={openFromButton}
-            className="rounded-lg bg-accent px-3 py-1.5 text-sm font-medium text-white transition-colors hover:bg-accent-hover"
-          >
-            Add plan block
-          </button>
-        </div>
-      )}
-
       <div
         ref={scrollRef}
         className={`mt-4 overflow-x-auto rounded-xl border border-stone-200 bg-white ${scrollHeight ? "overflow-y-auto" : ""}`}
@@ -326,6 +314,19 @@ export default function WeekCalendar({
           </div>
         </div>
       </div>
+
+      {/* Below the calendar, full width. Later an "Add event" button sits beside it. */}
+      {canAddBlocks && (
+        <div className="mt-3 flex justify-center gap-3">
+          <button
+            type="button"
+            onClick={openFromButton}
+            className="w-full rounded-lg bg-accent px-4 py-2.5 text-sm font-medium text-white transition-colors hover:bg-accent-hover"
+          >
+            Add plan block
+          </button>
+        </div>
+      )}
 
       {draft && (
         <PlanBlockDialog
