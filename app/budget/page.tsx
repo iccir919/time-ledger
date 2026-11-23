@@ -265,12 +265,25 @@ async function Plan({ userId, timeZone, week, planStatus }: PlanProps) {
   // Day labels in the user's time zone, e.g. "Mon" and "16"
   const weekdayLabel = new Intl.DateTimeFormat("en-US", { timeZone, weekday: "short" });
   const dayNumberLabel = new Intl.DateTimeFormat("en-US", { timeZone, day: "numeric" });
+  const fullLabel = new Intl.DateTimeFormat("en-US", {
+    timeZone,
+    weekday: "short",
+    month: "short",
+    day: "numeric",
+  });
 
   const days = week.days.map((day) => ({
     date: day.date,
     weekday: weekdayLabel.format(day.start),
     dayNumber: dayNumberLabel.format(day.start),
+    // e.g. "Fri, Nov 27", for the popup's day picker
+    label: fullLabel.format(day.start),
   }));
+
+  // Minutes since midnight today (null when today isn't in this week), so a popup opened
+  // for today starts at the next full hour
+  const todayDay = week.days.find((day) => day.date === week.today);
+  const nowMinutes = todayDay ? (now - todayDay.start.getTime()) / 60_000 : null;
 
   return (
     <>
@@ -350,6 +363,9 @@ async function Plan({ userId, timeZone, week, planStatus }: PlanProps) {
         planned={planned}
         plannedAhead={plannedAhead}
         actual={actual}
+        canAddBlocks={Boolean(planCalendarId) && !planMissing}
+        timeZone={timeZone}
+        nowMinutes={nowMinutes}
       />
 
       {uncategorizedHours > 0 && (

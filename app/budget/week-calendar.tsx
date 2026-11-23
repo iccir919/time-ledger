@@ -108,7 +108,7 @@ function toTime(minutes: number) {
 
 // A one-hour draft starting at the given minute of the day.
 // A late start like 23:30 ends at 00:30, which the popup reads as the next day.
-function draftAt(date: string, startMinutes: number): BlockDraft {
+export function draftAt(date: string, startMinutes: number): BlockDraft {
   const start = Math.min(startMinutes, 23 * 60 + 30);
   return { date, start: toTime(start), end: toTime((start + 60) % (24 * 60)) };
 }

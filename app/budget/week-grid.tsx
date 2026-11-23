@@ -1,10 +1,12 @@
 "use client";
 
-import { useState } from "react";
+import { useCallback, useState } from "react";
 import GoalStatusLabel from "@/components/goal-status-label";
 import { goalProgress, goalStatus } from "@/lib/goals";
 import { formatHours } from "@/lib/hours";
 import { saveGoal } from "./actions";
+import PlanBlockDialog, { type BlockDraft } from "./plan-block-dialog";
+import { draftAt } from "./week-calendar";
 
 // Columns: name, goal, days, week. Phones show 3 days, wider screens all 7.
 // The name column has a max width; the week column takes the leftover space.
@@ -15,6 +17,8 @@ type GridDay = {
   date: string;
   weekday: string;
   dayNumber: string;
+  // e.g. "Fri, Nov 27", for the popup's day picker
+  label: string;
 };
 
 type GridGroup = {
@@ -37,6 +41,11 @@ type WeekGridProps = {
   planned: Record<string, number>;
   plannedAhead: Record<string, number>;
   actual: Record<string, number>;
+  // Clicking today's or a future day's cell opens the popup to plan it (needs a Plan calendar)
+  canAddBlocks: boolean;
+  timeZone: string;
+  // Minutes since midnight today, or null when today isn't in this week
+  nowMinutes: number | null;
 };
 
 type SaveStatus = "saving" | "saved" | "error";
@@ -92,6 +101,9 @@ export default function WeekGrid({
   planned,
   plannedAhead,
   actual,
+  canAddBlocks,
+  timeZone,
+  nowMinutes,
 }: WeekGridProps) {
   const categories = groups.flatMap((group) => group.categories);
 
@@ -143,6 +155,16 @@ export default function WeekGrid({
         ahead: weekTotal(category.id, aheadAt),
       }))
   );
+
+  // The block being planned from a day cell, or null when the popup is closed
+  const [draft, setDraft] = useState<BlockDraft | null>(null);
+  const closeDialog = useCallback(() => setDraft(null), []);
+
+  // Plan a day for a category: today starts at the next full hour, other days at 9 AM
+  function planDay(categoryId: string, date: string) {
+    const start = date === today && nowMinutes !== null ? Math.ceil(nowMinutes / 60) * 60 : 9 * 60;
+    setDraft({ ...draftAt(date, start), categoryId });
+  }
 
   // Hide the days a phone doesn't show
   const dayClass = (date: string) => (mobileDates.includes(date) ? "" : "hidden md:block");
@@ -216,7 +238,10 @@ export default function WeekGrid({
       </div>
 
       <div className="mt-6 flex flex-wrap items-center gap-x-5 gap-y-1 text-sm text-stone-600">
-        <span>Type a weekly goal for each category. It saves on its own.</span>
+        <span>
+          Type a weekly goal for each category. It saves on its own.
+          {canAddBlocks && " Click a day to plan it."}
+        </span>
         <span className="flex items-center gap-2 text-xs text-stone-500">
           <span className="h-1.5 w-4 rounded-full bg-accent" /> done
           <span className="ml-2 h-1.5 w-4 rounded-full bg-accent/35" /> planned
@@ -317,6 +342,11 @@ export default function WeekGrid({
                         ahead={aheadAt(cellKey(category.id, day.date))}
                         color={category.color}
                         className={dayClass(day.date)}
+                        onPlan={
+                          canAddBlocks && day.date >= today
+                            ? () => planDay(category.id, day.date)
+                            : undefined
+                        }
                       />
                     ))}
 
@@ -383,6 +413,16 @@ export default function WeekGrid({
           </div>
         </div>
       </div>
+
+      {draft && (
+        <PlanBlockDialog
+          draft={draft}
+          days={days.map((day) => ({ date: day.date, label: day.label }))}
+          groups={groups}
+          timeZone={timeZone}
+          onClose={closeDialog}
+        />
+      )}
     </div>
   );
 }
@@ -396,11 +436,13 @@ type DayCellProps = {
   ahead: number;
   color: string;
   className: string;
+  // When set, the cell is a button that opens the popup to plan this day
+  onPlan?: () => void;
 };
 
 // One day for one category: a number, plus a tiny bar comparing it to the plan.
 // Hover (or tap) for the exact figures.
-function DayCell({ label, kind, done, planned, ahead, color, className }: DayCellProps) {
+function DayCell({ label, kind, done, planned, ahead, color, className, onPlan }: DayCellProps) {
   let number = done;
   let bar: { done: number; planned: number; total: number } | null = null;
   let detail = done > 0 ? `${label}: ${formatHours(done)} done` : `${label}: nothing tracked`;
@@ -424,19 +466,22 @@ function DayCell({ label, kind, done, planned, ahead, color, className }: DayCel
     detail = `${label}: ${formatHours(done)} done of ${formatHours(planned)} planned`;
   }
 
-  return (
-    <div
-      title={detail}
-      className={`rounded-md px-1 py-1 text-center tabular-nums ${className} ${
-        kind === "today" ? "bg-accent-soft/60" : ""
-      }`}
-    >
+  const content = (
+    <>
       <p
         className={`text-sm ${
           number === 0 ? "text-stone-300" : kind === "future" ? "text-stone-400" : "text-stone-800"
         }`}
       >
-        {shortHours(number)}
+        {/* An empty cell you can plan shows "+" on hover */}
+        {onPlan && number === 0 ? (
+          <>
+            <span className="group-hover:hidden">–</span>
+            <span className="hidden font-medium text-accent group-hover:inline">+</span>
+          </>
+        ) : (
+          shortHours(number)
+        )}
       </p>
       {bar && (
         <Bar
@@ -447,6 +492,30 @@ function DayCell({ label, kind, done, planned, ahead, color, className }: DayCel
           className="mx-auto mt-1 h-1 w-full max-w-10"
         />
       )}
+    </>
+  );
+
+  const base = `rounded-md px-1 py-1 text-center tabular-nums ${className} ${
+    kind === "today" ? "bg-accent-soft/60" : ""
+  }`;
+
+  // Today and future days (with a Plan calendar): a button that opens the popup
+  if (onPlan) {
+    return (
+      <button
+        type="button"
+        onClick={onPlan}
+        title={`${detail}. Click to plan.`}
+        className={`group ${base} cursor-pointer outline-1 outline-transparent transition-colors hover:bg-accent-soft/40 hover:outline-accent`}
+      >
+        {content}
+      </button>
+    );
+  }
+
+  return (
+    <div title={detail} className={base}>
+      {content}
     </div>
   );
 }
