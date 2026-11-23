@@ -219,10 +219,12 @@ async function Plan({ userId, timeZone, week, planStatus }: PlanProps) {
   const planned: Record<string, number> = {};
   const unmatchedTitles = new Set<string>();
   let planProblem = false;
+  let planMissing = false;
 
   if (planCalendarId) {
-    const { blocks, problem } = await loadPlanBlocks(userId, planCalendarId, week);
+    const { blocks, problem, missing } = await loadPlanBlocks(userId, planCalendarId, week);
     planProblem = problem;
+    planMissing = missing;
 
     const categoryIdByName = new Map(
       groups
@@ -261,21 +263,23 @@ async function Plan({ userId, timeZone, week, planStatus }: PlanProps) {
 
   return (
     <>
-
-      {/* Offer to create a Plan calendar if there isn't one yet */}
-      {!planCalendarId && (
+      {/* Offer to create a Plan calendar if there isn't one yet, or it was deleted in Google */}
+      {(!planCalendarId || planMissing) && (
         <section className="mt-6 flex flex-wrap items-center justify-between gap-4 rounded-xl border border-stone-200 bg-white px-5 py-4">
           <div className="max-w-md">
-            <p className="text-sm font-medium text-stone-900">Want to schedule your goals?</p>
+            <p className="text-sm font-medium text-stone-900">
+              {planMissing ? "Your Plan calendar was deleted" : "Want to schedule your goals?"}
+            </p>
             <p className="mt-1 text-sm leading-relaxed text-stone-600">
-              Time Ledger can create a {PLAN_CALENDAR_NAME} calendar in your Google account.
-              Blocks you add there show up here as planned hours.
+              {planMissing
+                ? "It's no longer in your Google account, so planned hours can't show. Create a new one to keep planning."
+                : `Time Ledger can create a ${PLAN_CALENDAR_NAME} calendar in your Google account. Blocks you add there show up here as planned hours.`}
             </p>
           </div>
           <form action={createPlanCalendar}>
             <input type="hidden" name="return_to" value={`/budget?week=${week.weekStart}`} />
             <button className="rounded-lg bg-accent px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-accent-hover">
-              Create Plan calendar
+              {planMissing ? "Create a new Plan calendar" : "Create Plan calendar"}
             </button>
           </form>
         </section>

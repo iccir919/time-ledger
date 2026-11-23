@@ -1,5 +1,5 @@
 import "server-only";
-import { listGoogleEvents, withGoogleAccessToken } from "@/lib/google";
+import { GoogleApiError, listGoogleEvents, withGoogleAccessToken } from "@/lib/google";
 import type { Week } from "@/lib/week";
 
 export type PlanBlock = {
@@ -9,20 +9,28 @@ export type PlanBlock = {
   endAt: string;
 };
 
-// The timed blocks on the user's Plan calendar for one week.
-// problem is true when Google couldn't be reached, so pages can say so.
+export type PlanBlocksResult = {
+  blocks: PlanBlock[];
+  // Google couldn't be reached
+  problem: boolean;
+  // The Plan calendar was deleted in Google
+  missing: boolean;
+};
+
+// The timed blocks on the user's Plan calendar for one week. Never throws,
+// so pages can show a notice instead of an error screen.
 export async function loadPlanBlocks(
   userId: string,
   planCalendarId: string,
   week: Week
-): Promise<{ blocks: PlanBlock[]; problem: boolean }> {
+): Promise<PlanBlocksResult> {
   try {
     const events = await withGoogleAccessToken(userId, (accessToken) =>
       listGoogleEvents(accessToken, planCalendarId, week.start, week.end)
     );
 
     if (!events) {
-      return { blocks: [], problem: true };
+      return { blocks: [], problem: true, missing: false };
     }
 
     const blocks = events
@@ -35,10 +43,14 @@ export async function loadPlanBlocks(
         endAt: event.end.dateTime!,
       }));
 
-    return { blocks, problem: false };
+    return { blocks, problem: false, missing: false };
   } catch (error) {
+    // 404 or 410: the calendar was deleted in Google
+    if (error instanceof GoogleApiError && (error.status === 404 || error.status === 410)) {
+      return { blocks: [], problem: false, missing: true };
+    }
     console.error("Could not load the Plan calendar:", error);
-    return { blocks: [], problem: true };
+    return { blocks: [], problem: true, missing: false };
   }
 }
 

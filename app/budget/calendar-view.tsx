@@ -59,12 +59,17 @@ export default async function CalendarView({ userId, timeZone, week }: CalendarV
   const planCalendarId = settingsResult.data?.plan_calendar_id ?? null;
   let planBlocksFromGoogle: PlanBlock[] = [];
   let planProblem = false;
+  let planMissing = false;
 
   if (planCalendarId) {
     const result = await loadPlanBlocks(userId, planCalendarId, week);
     planBlocksFromGoogle = result.blocks;
     planProblem = result.problem;
+    planMissing = result.missing;
   }
+
+  // Adding and editing blocks needs a Plan calendar that still exists
+  const hasPlanCalendar = Boolean(planCalendarId) && !planMissing;
 
   // Plan blocks match a category by title, which gives them their color
   const groups = groupsResult.data;
@@ -140,8 +145,18 @@ export default async function CalendarView({ userId, timeZone, week }: CalendarV
           Tracked (right)
         </span>
         <span>Times shown in {timeZone}</span>
-        {planCalendarId && <span>Click an empty spot to add a plan block</span>}
+        {hasPlanCalendar && <span>Click an empty spot to add a plan block</span>}
       </div>
+
+      {planMissing && (
+        <p className="mt-4 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+          Your Plan calendar was deleted in Google.{" "}
+          <Link href="/calendars" className="font-medium underline">
+            Create a new one
+          </Link>{" "}
+          to keep planning here.
+        </p>
+      )}
 
       {!planCalendarId && (
         <p className="mt-4 text-sm text-stone-600">
@@ -165,7 +180,7 @@ export default async function CalendarView({ userId, timeZone, week }: CalendarV
         mobileDates={focusDays(days.map((day) => day.date), week.today)}
         nowMinutes={nowMinutes}
         blocks={[...planBlocks, ...trackedBlocks]}
-        canAddBlocks={Boolean(planCalendarId)}
+        canAddBlocks={hasPlanCalendar}
         groups={groups}
         timeZone={timeZone}
       />

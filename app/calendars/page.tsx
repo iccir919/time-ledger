@@ -3,7 +3,7 @@ import { createClient } from "@/lib/supabase/server";
 import AppHeader from "@/components/app-header";
 import SignInButton from "@/components/sign-in-button";
 import { getGoogleAccessToken, listGoogleCalendars } from "@/lib/google";
-import { PLAN_CALENDAR_NAME } from "@/lib/plan-calendar";
+import { looksLikePlanCalendar, PLAN_CALENDAR_NAME } from "@/lib/plan-calendar";
 import {
   createPlanCalendar,
   deletePlanCalendar,
@@ -57,7 +57,6 @@ export default async function CalendarsPage({ searchParams }: CalendarsPageProps
       .from("tracked_calendars")
       .select("google_calendar_id, name, default_category_id"),
     supabase
-
       .from("category_groups")
       .select("id, name, categories(id, name)")
       .order("sort_order")
@@ -75,7 +74,7 @@ export default async function CalendarsPage({ searchParams }: CalendarsPageProps
     throw new Error(settingsResult.error.message);
   }
 
-    // Tracked calendars that were deleted in Google. Saving the form stops tracking them.
+  // Tracked calendars that were deleted in Google. Saving the form stops tracking them.
   const missingCalendars = trackedResult.data.filter(
     (row) => !calendars.some((calendar) => calendar.id === row.google_calendar_id)
   );
@@ -118,6 +117,10 @@ export default async function CalendarsPage({ searchParams }: CalendarsPageProps
               const name = calendar.summaryOverride ?? calendar.summary;
               const checkboxId = `calendar-${calendar.id}`;
               const isPlanCalendar = calendar.id === planCalendarId;
+              // A Plan calendar made by another copy of Time Ledger (e.g. local vs production).
+              // Plan calendars hold plans, not time spent, so neither kind can be tracked.
+              const isOtherPlanCalendar = !isPlanCalendar && looksLikePlanCalendar(calendar.summary);
+              const cannotTrack = isPlanCalendar || isOtherPlanCalendar;
 
               return (
                 <div key={calendar.id} className="flex items-center gap-4 px-5 py-3">
@@ -126,8 +129,8 @@ export default async function CalendarsPage({ searchParams }: CalendarsPageProps
                     id={checkboxId}
                     name="calendar_id"
                     value={calendar.id}
-                    defaultChecked={tracked.has(calendar.id) && !isPlanCalendar}
-                    disabled={isPlanCalendar}
+                    defaultChecked={tracked.has(calendar.id) && !cannotTrack}
+                    disabled={cannotTrack}
                     className="size-4 accent-accent disabled:opacity-40"
                   />
                   <input type="hidden" name={`name:${calendar.id}`} value={name} />
@@ -145,12 +148,17 @@ export default async function CalendarsPage({ searchParams }: CalendarsPageProps
                         <span className="ml-2 text-xs text-stone-400">primary</span>
                       )}
                       {isPlanCalendar && (
-                        <span className="ml-2 text-xs text-accent">plan calendar</span>
+                        <span className="ml-2 text-xs text-accent">this app&apos;s plan calendar</span>
+                      )}
+                      {isOtherPlanCalendar && (
+                        <span className="ml-2 text-xs text-stone-400">
+                          from another copy of Time Ledger, not used here
+                        </span>
                       )}
                     </span>
                   </label>
                   <select
-                    disabled={isPlanCalendar}
+                    disabled={cannotTrack}
                     name={`default:${calendar.id}`}
                     defaultValue={tracked.get(calendar.id) ?? ""}
                     aria-label={`Default category for ${name}`}
@@ -188,9 +196,9 @@ export default async function CalendarsPage({ searchParams }: CalendarsPageProps
             <>
               <p className="mt-2 text-sm leading-relaxed text-stone-600">
                 Your <span className="font-medium text-stone-900">{PLAN_CALENDAR_NAME}</span>{" "}
-                calendar is in Google Calendar. Add blocks to it titled with a category name, like
-                &ldquo;Coding&rdquo;, then use <span className="font-medium">Fill from Plan
-                calendar</span> on the Plan page. Its events never count as tracked time.
+                calendar is in Google Calendar. Blocks titled with a category name, like
+                &ldquo;Learning&rdquo;, show up on the Plan page as planned hours. You can also add
+                them from the Plan page&apos;s Calendar view. Its events never count as tracked time.
               </p>
 
               {/* Removing it: two choices, shown only when asked for */}
