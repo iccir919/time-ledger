@@ -1,4 +1,6 @@
 import Link from "next/link";
+import { TZDate } from "@date-fns/tz";
+import { format } from "date-fns";
 import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import AppHeader from "@/components/app-header";
@@ -12,6 +14,7 @@ import { loadPlanBlocks, nameKey } from "@/lib/plan-blocks";
 import { copyLastWeekGoals } from "./actions";
 import { createPlanCalendar } from "@/app/calendars/actions";
 import WeekGrid from "./week-grid";
+import type { DayItem } from "./day-sheet";
 import CalendarView from "./calendar-view";
 
 type BudgetPageProps = {
@@ -155,7 +158,7 @@ async function Plan({ userId, timeZone, week, planStatus }: PlanProps) {
         .gt("planned_hours", 0),
       supabase
         .from("events")
-        .select("category_id, start_at, end_at")
+        .select("category_id, title, start_at, end_at")
         .lt("start_at", week.end.toISOString())
         .gt("end_at", week.start.toISOString()),
       supabase.from("user_settings").select("plan_calendar_id").maybeSingle(),
@@ -198,6 +201,11 @@ async function Plan({ userId, timeZone, week, planStatus }: PlanProps) {
 
   // Actual hours per category per day. An event crossing midnight is split between days.
   const actual: Record<string, number> = {};
+  // What happened and what's planned for each category on each day, for the day sheet
+  const details: Record<string, DayItem[]> = {};
+  const addDetail = (key: string, item: DayItem) => {
+    (details[key] ??= []).push(item);
+  };
   let uncategorizedHours = 0;
   for (const event of eventsResult.data) {
     for (const day of week.days) {
@@ -208,6 +216,12 @@ async function Plan({ userId, timeZone, week, planStatus }: PlanProps) {
       if (event.category_id) {
         const key = `${event.category_id}:${day.date}`;
         actual[key] = (actual[key] ?? 0) + hours;
+        addDetail(key, {
+          kind: "done",
+          title: event.title?.trim() || "(No title)",
+          startMs: Date.parse(event.start_at),
+          endMs: Date.parse(event.end_at),
+        });
       } else {
         uncategorizedHours += hours;
       }
@@ -237,17 +251,35 @@ async function Plan({ userId, timeZone, week, planStatus }: PlanProps) {
         .map((category) => [nameKey(category.name), category.id])
     );
 
+    // A time as the user sees it: the date ("2026-11-24") and the clock time ("19:00")
+    const localParts = (ms: number) => {
+      const local = new TZDate(ms, timeZone);
+      return { date: format(local, "yyyy-MM-dd"), time: format(local, "HH:mm") };
+    };
+
     for (const block of blocks) {
       const categoryId = categoryIdByName.get(nameKey(block.title));
       if (!categoryId) {
         unmatchedTitles.add(block.title);
         continue;
       }
+      const startMs = Date.parse(block.startAt);
+      const endMs = Date.parse(block.endAt);
+      const start = localParts(startMs);
+      const end = localParts(endMs);
       for (const day of week.days) {
         const hours = hoursWithin(block.startAt, block.endAt, day.start, day.end);
         if (hours > 0) {
           const key = `${categoryId}:${day.date}`;
           planned[key] = (planned[key] ?? 0) + hours;
+          addDetail(key, {
+            kind: "plan",
+            title: block.title,
+            startMs,
+            endMs,
+            // What the edit popup starts with
+            draft: { blockId: block.id, categoryId, date: start.date, start: start.time, end: end.time },
+          });
 
           const aheadFrom = new Date(Math.max(now, day.start.getTime()));
           const ahead = hoursWithin(block.startAt, block.endAt, aheadFrom, day.end);
@@ -363,6 +395,7 @@ async function Plan({ userId, timeZone, week, planStatus }: PlanProps) {
         planned={planned}
         plannedAhead={plannedAhead}
         actual={actual}
+        details={details}
         canAddBlocks={Boolean(planCalendarId) && !planMissing}
         timeZone={timeZone}
         nowMinutes={nowMinutes}

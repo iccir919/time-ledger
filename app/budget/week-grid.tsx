@@ -5,13 +5,17 @@ import GoalStatusLabel from "@/components/goal-status-label";
 import { goalProgress, goalStatus } from "@/lib/goals";
 import { formatHours } from "@/lib/hours";
 import { saveGoal } from "./actions";
+import DaySheet, { type DayItem } from "./day-sheet";
 import PlanBlockDialog, { type BlockDraft } from "./plan-block-dialog";
 import { draftAt } from "./week-calendar";
 
 // Columns: name, goal, days, week. Phones show 3 days, wider screens all 7.
 // The name column has a max width; the week column takes the leftover space.
+// (No "grid" here, so the "now" row can switch between hidden and grid; GRID adds it)
 const COLUMNS =
-  "grid items-center gap-2 grid-cols-[minmax(5.5rem,7rem)_4.5rem_repeat(3,2.75rem)_minmax(7.5rem,1fr)] md:grid-cols-[minmax(8rem,10rem)_5.5rem_repeat(7,minmax(3rem,3.75rem))_minmax(12rem,1fr)]";
+  "items-center gap-2 grid-cols-[minmax(5.5rem,7rem)_4.5rem_repeat(3,4rem)_minmax(7.5rem,1fr)] md:grid-cols-[minmax(8rem,10rem)_5.5rem_repeat(7,minmax(4rem,5rem))_minmax(11rem,1fr)]";
+
+const GRID = `grid ${COLUMNS}`;
 
 type GridDay = {
   date: string;
@@ -41,7 +45,9 @@ type WeekGridProps = {
   planned: Record<string, number>;
   plannedAhead: Record<string, number>;
   actual: Record<string, number>;
-  // Clicking today's or a future day's cell opens the popup to plan it (needs a Plan calendar)
+  // What happened and what's planned, keyed like the hours, for the day sheet
+  details: Record<string, DayItem[]>;
+  // Adding plan blocks from the day sheet needs a Plan calendar
   canAddBlocks: boolean;
   timeZone: string;
   // Minutes since midnight today, or null when today isn't in this week
@@ -54,9 +60,9 @@ function cellKey(categoryId: string, date: string) {
   return `${categoryId}:${date}`;
 }
 
-// 2.25 -> "2.25", 0 -> "–"
-function shortHours(hours: number) {
-  return hours > 0 ? String(Number(hours.toFixed(2))) : "–";
+// 2.25 -> "2.25"
+function num(hours: number) {
+  return String(Number(hours.toFixed(2)));
 }
 
 function goalsAsText(goals: Record<string, number>) {
@@ -67,7 +73,7 @@ function goalsAsText(goals: Record<string, number>) {
   return text;
 }
 
-// A bar: solid = done, light = planned. Used small in day cells and bigger in the week column.
+// A bar: solid = done, light = planned. Used in the header and the week column.
 function Bar({
   done,
   planned,
@@ -101,6 +107,7 @@ export default function WeekGrid({
   planned,
   plannedAhead,
   actual,
+  details,
   canAddBlocks,
   timeZone,
   nowMinutes,
@@ -156,18 +163,32 @@ export default function WeekGrid({
       }))
   );
 
-  // The block being planned from a day cell, or null when the popup is closed
+  // The day sheet that's open (a category on a day), or null
+  const [sheet, setSheet] = useState<{ categoryId: string; date: string } | null>(null);
+  const closeSheet = useCallback(() => setSheet(null), []);
+
+  // The block being added or edited in the popup, or null when the popup is closed
   const [draft, setDraft] = useState<BlockDraft | null>(null);
   const closeDialog = useCallback(() => setDraft(null), []);
 
   // Plan a day for a category: today starts at the next full hour, other days at 9 AM
   function planDay(categoryId: string, date: string) {
     const start = date === today && nowMinutes !== null ? Math.ceil(nowMinutes / 60) * 60 : 9 * 60;
+    setSheet(null);
     setDraft({ ...draftAt(date, start), categoryId });
   }
 
+  // Open a plan block from the day sheet to edit or delete it
+  function editBlock(blockDraft: BlockDraft) {
+    setSheet(null);
+    setDraft(blockDraft);
+  }
+
+  const kindOf = (date: string): "past" | "today" | "future" => (date === today ? "today" : date > today ? "future" : "past");
+
   // Hide the days a phone doesn't show
-  const dayClass = (date: string) => (mobileDates.includes(date) ? "" : "hidden md:block");
+  // (Day cells are flex boxes, so they ask for "md:flex" instead)
+  const dayClass = (date: string, show = "md:block") => (mobileDates.includes(date) ? "" : `hidden ${show}`);
   // Dates are "YYYY-MM-DD", so comparing them as text puts them in order
   const isFuture = (date: string) => date > today;
 
@@ -239,20 +260,25 @@ export default function WeekGrid({
 
       <div className="mt-6 flex flex-wrap items-center gap-x-5 gap-y-1 text-sm text-stone-600">
         <span>
-          Type a weekly goal for each category. It saves on its own.
-          {canAddBlocks && " Click a day to plan it."}
-        </span>
-        <span className="flex items-center gap-2 text-xs text-stone-500">
-          <span className="h-1.5 w-4 rounded-full bg-accent" /> done
-          <span className="ml-2 h-1.5 w-4 rounded-full bg-accent/35" /> planned
+          Type a weekly goal for each category. It saves on its own. Click a day to see it
+          {canAddBlocks ? " and plan." : "."}
         </span>
       </div>
 
       {/* Grid. Scrolls sideways if it still doesn't fit. */}
       <div className="mt-3 overflow-x-auto rounded-xl border border-stone-200 bg-white">
-        <div className="min-w-[24rem] p-4 md:min-w-[54rem]">
+        <div className="min-w-[32rem] p-4 md:min-w-[58rem]">
+          {/* The "now" line: past days show what happened, later days show what's planned.
+              Phones show 3 days and wider screens 7, so there's one version for each. */}
+          <NowBand
+            dates={days.map((day) => day.date).filter((date) => mobileDates.includes(date))}
+            today={today}
+            className="grid md:hidden"
+          />
+          <NowBand dates={days.map((day) => day.date)} today={today} className="hidden md:grid" />
+
           {/* Headers */}
-          <div className={`${COLUMNS} pb-2 text-sm text-stone-500`}>
+          <div className={`${GRID} pb-2 text-sm text-stone-500`}>
             <span />
             <span className="text-center font-medium text-accent">Goal ✎</span>
             {days.map((day) => (
@@ -280,7 +306,7 @@ export default function WeekGrid({
                 const fieldStatus = status[category.id];
 
                 return (
-                  <div key={category.id} className={`${COLUMNS} py-2`}>
+                  <div key={category.id} className={`${GRID} py-2`}>
                     <span className="flex items-center gap-2 px-1 text-sm">
                       <span
                         className="size-2.5 shrink-0 rounded-full"
@@ -331,22 +357,17 @@ export default function WeekGrid({
                       )}
                     </div>
 
-                    {/* Days: one number (done, or planned for future days), plus a tiny bar when there's a plan */}
+                    {/* Days, in words: done (and missed) for past days, the plan for later days. Click to open the day. */}
                     {days.map((day) => (
                       <DayCell
                         key={day.date}
                         label={`${day.weekday} ${day.dayNumber}`}
-                        kind={day.date === today ? "today" : isFuture(day.date) ? "future" : "past"}
+                        kind={kindOf(day.date)}
                         done={actualAt(cellKey(category.id, day.date))}
                         planned={plannedAt(cellKey(category.id, day.date))}
                         ahead={aheadAt(cellKey(category.id, day.date))}
-                        color={category.color}
-                        className={dayClass(day.date)}
-                        onPlan={
-                          canAddBlocks && day.date >= today
-                            ? () => planDay(category.id, day.date)
-                            : undefined
-                        }
+                        className={dayClass(day.date, "md:flex")}
+                        onOpen={() => setSheet({ categoryId: category.id, date: day.date })}
                       />
                     ))}
 
@@ -390,7 +411,7 @@ export default function WeekGrid({
           ))}
 
           {/* Totals per day: done, or planned for future days */}
-          <div className={`${COLUMNS} border-t border-stone-200 pt-2 text-sm font-semibold`}>
+          <div className={`${GRID} border-t border-stone-200 pt-2 text-sm font-semibold`}>
             <span className="px-1">Total</span>
             <span className="pr-5 text-right tabular-nums">{formatHours(goalTotal)}</span>
             {days.map((day) => {
@@ -414,6 +435,31 @@ export default function WeekGrid({
         </div>
       </div>
 
+      {sheet && (() => {
+        const category = categories.find((c) => c.id === sheet.categoryId);
+        const day = days.find((d) => d.date === sheet.date);
+        if (!category || !day) {
+          return null;
+        }
+        const key = cellKey(sheet.categoryId, sheet.date);
+        return (
+          <DaySheet
+            category={category}
+            dayLabel={day.label}
+            kind={kindOf(sheet.date)}
+            items={details[key] ?? []}
+            done={actualAt(key)}
+            planned={plannedAt(key)}
+            ahead={aheadAt(key)}
+            canAddBlocks={canAddBlocks}
+            timeZone={timeZone}
+            onAdd={() => planDay(sheet.categoryId, sheet.date)}
+            onEdit={editBlock}
+            onClose={closeSheet}
+          />
+        );
+      })()}
+
       {draft && (
         <PlanBlockDialog
           draft={draft}
@@ -427,6 +473,40 @@ export default function WeekGrid({
   );
 }
 
+// The row above the day headers: a solid line under past days ("what happened"),
+// "now" over today, and a dashed line under later days ("what's planned")
+function NowBand({ dates, today, className }: { dates: string[]; today: string; className: string }) {
+  const past = dates.filter((date) => date < today).length;
+  const hasToday = dates.includes(today);
+  const future = dates.filter((date) => date > today).length;
+  const span = (count: number) => ({ gridColumn: `span ${count} / span ${count}` });
+
+  return (
+    <div className={`${COLUMNS} pb-1 text-[11px] ${className}`}>
+      <span />
+      <span />
+      {past > 0 && (
+        <span
+          style={span(past)}
+          className="truncate border-b-2 border-accent/60 pb-0.5 text-center text-stone-500"
+        >
+          what happened
+        </span>
+      )}
+      {hasToday && <span className="pb-0.5 text-center font-semibold text-accent">now</span>}
+      {future > 0 && (
+        <span
+          style={span(future)}
+          className="truncate border-b-2 border-dashed border-stone-300 pb-0.5 text-center text-stone-400"
+        >
+          what&apos;s planned
+        </span>
+      )}
+      <span />
+    </div>
+  );
+}
+
 type DayCellProps = {
   label: string;
   kind: "past" | "today" | "future";
@@ -434,88 +514,54 @@ type DayCellProps = {
   // The whole day's plan, and the part of it still after now
   planned: number;
   ahead: number;
-  color: string;
   className: string;
-  // When set, the cell is a button that opens the popup to plan this day
-  onPlan?: () => void;
+  // Opens the day sheet for this category and day
+  onOpen: () => void;
 };
 
-// One day for one category: a number, plus a tiny bar comparing it to the plan.
-// Hover (or tap) for the exact figures.
-function DayCell({ label, kind, done, planned, ahead, color, className, onPlan }: DayCellProps) {
-  let number = done;
-  let bar: { done: number; planned: number; total: number } | null = null;
-  let detail = done > 0 ? `${label}: ${formatHours(done)} done` : `${label}: nothing tracked`;
+// One day for one category, in words: the hours on top, what they mean underneath.
+// Past days compare done to the plan, today adds what's still planned, later days show the plan.
+function DayCell({ label, kind, done, planned, ahead, className, onOpen }: DayCellProps) {
+  let main = done > 0 ? `${num(done)}h` : "–";
+  let note: { text: string; tone: "good" | "attention" | "quiet" } | null = null;
+  let mainClass = done > 0 ? "text-stone-900" : "text-stone-300";
 
   if (kind === "future") {
-    // Nothing done yet: show what's planned, in gray
-    number = planned;
+    main = planned > 0 ? `${num(planned)}h` : "–";
+    mainClass = planned > 0 ? "text-stone-500" : "text-stone-300";
     if (planned > 0) {
-      bar = { done: 0, planned, total: planned };
-      detail = `${label}: ${formatHours(planned)} planned`;
-    } else {
-      detail = `${label}: nothing planned`;
+      note = { text: "planned", tone: "quiet" };
     }
   } else if (kind === "today" && ahead > 0) {
-    // Done so far, and what's still planned for later today
-    bar = { done, planned: ahead, total: done + ahead };
-    detail = `${label}: ${formatHours(done)} done, ${formatHours(ahead)} still planned`;
+    note = { text: `+${num(ahead)}h later`, tone: "quiet" };
   } else if (planned > 0) {
-    // A past day (or today with nothing left): how much of the plan got done
-    bar = { done: Math.min(done, planned), planned: Math.max(planned - done, 0), total: planned };
-    detail = `${label}: ${formatHours(done)} done of ${formatHours(planned)} planned`;
+    // A past day (or today with nothing left): did the plan get done?
+    if (done >= planned) {
+      note = { text: "all done", tone: "good" };
+    } else {
+      main = `${num(done)} of ${num(planned)}h`;
+      mainClass = "text-stone-900";
+      note = { text: `${num(planned - done)}h missed`, tone: "attention" };
+    }
   }
 
-  const content = (
-    <>
-      <p
-        className={`text-sm ${
-          number === 0 ? "text-stone-300" : kind === "future" ? "text-stone-400" : "text-stone-800"
-        }`}
-      >
-        {/* An empty cell you can plan shows "+" on hover */}
-        {onPlan && number === 0 ? (
-          <>
-            <span className="group-hover:hidden">–</span>
-            <span className="hidden font-medium text-accent group-hover:inline">+</span>
-          </>
-        ) : (
-          shortHours(number)
-        )}
-      </p>
-      {bar && (
-        <Bar
-          done={bar.done}
-          planned={bar.planned}
-          total={bar.total}
-          color={color}
-          className="mx-auto mt-1 h-1 w-full max-w-10"
-        />
-      )}
-    </>
-  );
-
-  const base = `rounded-md px-1 py-1 text-center tabular-nums ${className} ${
-    kind === "today" ? "bg-accent-soft/60" : ""
-  }`;
-
-  // Today and future days (with a Plan calendar): a button that opens the popup
-  if (onPlan) {
-    return (
-      <button
-        type="button"
-        onClick={onPlan}
-        title={`${detail}. Click to plan.`}
-        className={`group ${base} cursor-pointer outline-1 outline-transparent transition-colors hover:bg-accent-soft/40 hover:outline-accent`}
-      >
-        {content}
-      </button>
-    );
-  }
+  const noteClass = {
+    good: "text-accent",
+    attention: "text-amber-600",
+    quiet: "text-stone-400",
+  };
 
   return (
-    <div title={detail} className={base}>
-      {content}
-    </div>
+    <button
+      type="button"
+      onClick={onOpen}
+      aria-label={`${label}: ${main}${note ? `, ${note.text}` : ""}. Open this day.`}
+      className={`flex min-h-11 cursor-pointer flex-col items-center justify-center rounded-md px-1 py-1 text-center tabular-nums leading-tight outline-1 outline-transparent transition-colors hover:bg-accent-soft/40 hover:outline-accent ${
+        kind === "today" ? "bg-accent-soft/60" : ""
+      } ${className}`}
+    >
+      <span className={`whitespace-nowrap text-[13px] md:text-sm ${mainClass}`}>{main}</span>
+      {note && <span className={`whitespace-nowrap text-[11px] ${noteClass[note.tone]}`}>{note.text}</span>}
+    </button>
   );
 }
