@@ -8,13 +8,14 @@ import ReconnectGoogle from "@/components/reconnect-google";
 import { formatHours, hoursWithin } from "@/lib/hours";
 import { syncRecentWeeks, type SyncResult } from "@/lib/sync-events";
 import WeekNav from "@/components/week-nav";
-import { focusDays, getWeekInRange, type Week } from "@/lib/week";
+import { getWeekInRange, type Week } from "@/lib/week";
 import { PLAN_CALENDAR_NAME } from "@/lib/plan-calendar";
 import { loadPlanBlocks, nameKey } from "@/lib/plan-blocks";
 import { copyLastWeekGoals } from "./actions";
 import { createPlanCalendar } from "@/app/calendars/actions";
 import WeekGrid from "./week-grid";
-import type { DayItem } from "./day-sheet";
+import type { CalendarBlock } from "./week-calendar";
+import { NO_CATEGORY_COLOR } from "@/lib/calendar-data";
 import CalendarView from "./calendar-view";
 
 type BudgetPageProps = {
@@ -55,7 +56,7 @@ export default async function BudgetPage({ searchParams }: BudgetPageProps) {
     <div className="min-h-screen">
       <AppHeader email={user.email} />
 
-      <main className="mx-auto max-w-5xl px-6 py-12">
+      <main className={`mx-auto max-w-5xl px-6 py-12 ${view === "grid" ? "xl:max-w-7xl" : ""}`}>
         <h1 className="text-2xl font-semibold tracking-tight">Plan</h1>
 
         {sync === null && (
@@ -140,7 +141,7 @@ type PlanProps = {
 async function Plan({ userId, timeZone, week, planStatus }: PlanProps) {
   const supabase = await createClient();
 
-  const [groupsResult, goalsResult, previousGoalsResult, eventsResult, settingsResult] =
+  const [groupsResult, goalsResult, previousGoalsResult, eventsResult, settingsResult, dayPlansResult] =
     await Promise.all([
       supabase
         .from("category_groups")
@@ -158,10 +159,16 @@ async function Plan({ userId, timeZone, week, planStatus }: PlanProps) {
         .gt("planned_hours", 0),
       supabase
         .from("events")
-        .select("category_id, title, start_at, end_at")
+        .select("id, category_id, title, start_at, end_at")
         .lt("start_at", week.end.toISOString())
         .gt("end_at", week.start.toISOString()),
       supabase.from("user_settings").select("plan_calendar_id").maybeSingle(),
+      // Hours typed into the grid for each day (plans without a time)
+      supabase
+        .from("daily_plans")
+        .select("category_id, plan_date, planned_hours")
+        .gte("plan_date", week.days[0].date)
+        .lte("plan_date", week.days[week.days.length - 1].date),
     ]);
 
   if (groupsResult.error) {
@@ -175,6 +182,9 @@ async function Plan({ userId, timeZone, week, planStatus }: PlanProps) {
   }
   if (settingsResult.error) {
     throw new Error(settingsResult.error.message);
+  }
+  if (dayPlansResult.error) {
+    throw new Error(dayPlansResult.error.message);
   }
 
   const groups = groupsResult.data;
@@ -199,14 +209,24 @@ async function Plan({ userId, timeZone, week, planStatus }: PlanProps) {
     goals[goal.category_id] = Number(goal.planned_hours);
   }
 
+  const categoryById = new Map(
+    groups.flatMap((group) => group.categories).map((category) => [category.id, category])
+  );
+
   // Actual hours per category per day. An event crossing midnight is split between days.
   const actual: Record<string, number> = {};
-  // What happened and what's planned for each category on each day, for the day sheet
-  const details: Record<string, DayItem[]> = {};
-  const addDetail = (key: string, item: DayItem) => {
-    (details[key] ??= []).push(item);
-  };
   let uncategorizedHours = 0;
+
+  // Everything for the day panel's calendar: tracked events now, plan blocks below
+  const calendarBlocks: CalendarBlock[] = eventsResult.data.map((event) => ({
+    id: event.id,
+    kind: "tracked" as const,
+    title: event.title?.trim() || "(No title)",
+    color: (event.category_id && categoryById.get(event.category_id)?.color) || NO_CATEGORY_COLOR,
+    startMs: Date.parse(event.start_at),
+    endMs: Date.parse(event.end_at),
+  }));
+
   for (const event of eventsResult.data) {
     for (const day of week.days) {
       const hours = hoursWithin(event.start_at, event.end_at, day.start, day.end);
@@ -216,24 +236,17 @@ async function Plan({ userId, timeZone, week, planStatus }: PlanProps) {
       if (event.category_id) {
         const key = `${event.category_id}:${day.date}`;
         actual[key] = (actual[key] ?? 0) + hours;
-        addDetail(key, {
-          kind: "done",
-          title: event.title?.trim() || "(No title)",
-          startMs: Date.parse(event.start_at),
-          endMs: Date.parse(event.end_at),
-        });
       } else {
         uncategorizedHours += hours;
       }
     }
   }
 
-  // Planned hours per category per day, from the Plan calendar's blocks
+  // Scheduled hours per category per day, from the Plan calendar's blocks,
+  // and the part of them still ahead (after now)
   const planCalendarId = settingsResult.data?.plan_calendar_id ?? null;
-  const planned: Record<string, number> = {};
-
-  // The part of each day's plan that's still ahead (after now), for "On track" and "Needs"
-  const plannedAhead: Record<string, number> = {};
+  const scheduled: Record<string, number> = {};
+  const scheduledAhead: Record<string, number> = {};
   const now = Date.now();
 
   const unmatchedTitles = new Set<string>();
@@ -259,34 +272,74 @@ async function Plan({ userId, timeZone, week, planStatus }: PlanProps) {
 
     for (const block of blocks) {
       const categoryId = categoryIdByName.get(nameKey(block.title));
-      if (!categoryId) {
-        unmatchedTitles.add(block.title);
-        continue;
-      }
       const startMs = Date.parse(block.startAt);
       const endMs = Date.parse(block.endAt);
       const start = localParts(startMs);
       const end = localParts(endMs);
+
+      // Every block shows in the day panel; one that doesn't match a category is gray
+      calendarBlocks.push({
+        id: block.id,
+        kind: "plan",
+        title: block.title,
+        color: (categoryId && categoryById.get(categoryId)?.color) || NO_CATEGORY_COLOR,
+        startMs,
+        endMs,
+        // What the edit popup starts with
+        draft: { blockId: block.id, categoryId: categoryId ?? "", date: start.date, start: start.time, end: end.time },
+      });
+
+      if (!categoryId) {
+        unmatchedTitles.add(block.title);
+        continue;
+      }
       for (const day of week.days) {
         const hours = hoursWithin(block.startAt, block.endAt, day.start, day.end);
         if (hours > 0) {
           const key = `${categoryId}:${day.date}`;
-          planned[key] = (planned[key] ?? 0) + hours;
-          addDetail(key, {
-            kind: "plan",
-            title: block.title,
-            startMs,
-            endMs,
-            // What the edit popup starts with
-            draft: { blockId: block.id, categoryId, date: start.date, start: start.time, end: end.time },
-          });
+          scheduled[key] = (scheduled[key] ?? 0) + hours;
 
           const aheadFrom = new Date(Math.max(now, day.start.getTime()));
           const ahead = hoursWithin(block.startAt, block.endAt, aheadFrom, day.end);
           if (ahead > 0) {
-            plannedAhead[key] = (plannedAhead[key] ?? 0) + ahead;
+            scheduledAhead[key] = (scheduledAhead[key] ?? 0) + ahead;
           }
         }
+      }
+    }
+  }
+
+  // Hours typed into the grid, keyed the same way
+  const typed: Record<string, number> = {};
+  for (const plan of dayPlansResult.data) {
+    typed[`${plan.category_id}:${plan.plan_date}`] = Number(plan.planned_hours);
+  }
+
+  // A day's plan is whichever is bigger: the hours typed, or the hours scheduled as blocks.
+  // So scheduling hours you already typed doesn't count them twice.
+  // Planned ahead (for the goal statuses): later days count their whole plan; today counts
+  // the blocks still ahead plus any typed hours that aren't scheduled yet; past days count none.
+  const planned: Record<string, number> = {};
+  const plannedAhead: Record<string, number> = {};
+  for (const category of categoryById.values()) {
+    for (const day of week.days) {
+      const key = `${category.id}:${day.date}`;
+      const typedHours = typed[key] ?? 0;
+      const scheduledHours = scheduled[key] ?? 0;
+      const plan = Math.max(typedHours, scheduledHours);
+      if (plan === 0) {
+        continue;
+      }
+      planned[key] = plan;
+
+      const ahead =
+        day.date > week.today
+          ? plan
+          : day.date === week.today
+            ? (scheduledAhead[key] ?? 0) + Math.max(typedHours - scheduledHours, 0)
+            : 0;
+      if (ahead > 0) {
+        plannedAhead[key] = ahead;
       }
     }
   }
@@ -310,6 +363,9 @@ async function Plan({ userId, timeZone, week, planStatus }: PlanProps) {
     dayNumber: dayNumberLabel.format(day.start),
     // e.g. "Fri, Nov 27", for the popup's day picker
     label: fullLabel.format(day.start),
+    // Midnight to midnight, for the day timeline
+    startMs: day.start.getTime(),
+    endMs: day.end.getTime(),
   }));
 
   // Minutes since midnight today (null when today isn't in this week), so a popup opened
@@ -389,13 +445,14 @@ async function Plan({ userId, timeZone, week, planStatus }: PlanProps) {
         weekStart={week.weekStart}
         groups={groups}
         days={days}
-        mobileDates={focusDays(days.map((day) => day.date), week.today)}
         today={week.today}
         goals={goals}
         planned={planned}
         plannedAhead={plannedAhead}
         actual={actual}
-        details={details}
+        typed={typed}
+        scheduled={scheduled}
+        blocks={calendarBlocks}
         canAddBlocks={Boolean(planCalendarId) && !planMissing}
         timeZone={timeZone}
         nowMinutes={nowMinutes}

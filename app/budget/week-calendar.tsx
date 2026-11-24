@@ -59,8 +59,12 @@ type WeekCalendarProps = {
   timeZone: string;
   // When set, the calendar is this many pixels tall and scrolls, starting just before now
   scrollHeight?: number;
+  // Fill the parent's height instead (the parent sets the height), scrolling the same way
+  fillHeight?: boolean;
     // Makes the day headers links, e.g. the dashboard's day opens Plan → Calendar
   headerHref?: string;
+  // The category new blocks start with, e.g. the one clicked in the Plan grid
+  defaultCategoryId?: string;
 };
 
 // Place one day's blocks: cut them to the day, then put overlapping blocks side by side
@@ -185,7 +189,9 @@ export default function WeekCalendar({
   groups,
   timeZone,
   scrollHeight,
+  fillHeight,
   headerHref,
+  defaultCategoryId,
 }: WeekCalendarProps) {
   const planBlocks = blocks.filter((block) => block.kind === "plan");
   const trackedBlocks = blocks.filter((block) => block.kind === "tracked");
@@ -208,11 +214,18 @@ export default function WeekCalendar({
   // In a scrolling calendar, start an hour before now (or at 8 AM on other days)
   const scrollRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
-    if (scrollHeight && scrollRef.current) {
-      const startMinutes = (nowMinutes ?? 9 * 60) - 60;
-      scrollRef.current.scrollTop = Math.max(0, (startMinutes / 60) * HOUR_HEIGHT);
+    if (!scrollHeight && !fillHeight) {
+      return;
     }
-  }, [scrollHeight, nowMinutes]);
+    // Wait a frame so the calendar has its final size before scrolling it
+    const frame = requestAnimationFrame(() => {
+      if (scrollRef.current) {
+        const startMinutes = (nowMinutes ?? 9 * 60) - 60;
+        scrollRef.current.scrollTop = Math.max(0, (startMinutes / 60) * HOUR_HEIGHT);
+      }
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [scrollHeight, fillHeight, nowMinutes]);
 
   // The block being added or edited, or null when the popup is closed
   const [draft, setDraft] = useState<BlockDraft | null>(null);
@@ -225,24 +238,26 @@ export default function WeekCalendar({
     }
     const top = event.currentTarget.getBoundingClientRect().top;
     const minutes = ((event.clientY - top) / HOUR_HEIGHT) * 60;
-    setDraft(draftAt(day.date, Math.floor(minutes / 30) * 30));
+    setDraft({ ...draftAt(day.date, Math.floor(minutes / 30) * 30), categoryId: defaultCategoryId });
   }
 
   // The "Add plan block" button: today if it's in this week (next full hour), otherwise Monday 9 AM
   function openFromButton() {
     const isTodayShown = days.some((day) => day.date === today);
     if (isTodayShown && nowMinutes !== null) {
-      setDraft(draftAt(today, Math.ceil(nowMinutes / 60) * 60));
+      setDraft({ ...draftAt(today, Math.ceil(nowMinutes / 60) * 60), categoryId: defaultCategoryId });
     } else {
-      setDraft(draftAt(days[0].date, 9 * 60));
+      setDraft({ ...draftAt(days[0].date, 9 * 60), categoryId: defaultCategoryId });
     }
   }
 
   return (
-    <>
+    <div className={fillHeight ? "flex h-full flex-col" : undefined}>
       <div
         ref={scrollRef}
-        className={`mt-4 overflow-x-auto rounded-xl border border-stone-200 bg-white ${scrollHeight ? "overflow-y-auto" : ""}`}
+        className={`overflow-x-auto rounded-xl border border-stone-200 bg-white ${
+          fillHeight ? "min-h-0 flex-1 overflow-y-auto" : "mt-4"
+        } ${scrollHeight ? "overflow-y-auto" : ""}`}
         style={scrollHeight ? { maxHeight: scrollHeight } : undefined}
       >
         <div className={isSingleDay ? "" : "md:min-w-[46rem]"}>
@@ -337,6 +352,6 @@ export default function WeekCalendar({
           onClose={closeDialog}
         />
       )}
-    </>
+    </div>
   );
 }

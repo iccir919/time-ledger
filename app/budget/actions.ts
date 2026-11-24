@@ -54,6 +54,41 @@ export async function saveGoal(
   return {};
 }
 
+// Save the hours planned for one category on one day (typed into the Plan grid, no time picked).
+// null (an emptied field, or 0) removes the day's plan.
+export async function saveDayPlan(
+  date: string,
+  categoryId: string,
+  hours: number | null
+): Promise<GoalResult> {
+  if (!DATE_PATTERN.test(date) || !categoryId || (hours !== null && !Number.isFinite(hours))) {
+    return { error: "Couldn't save that plan." };
+  }
+
+  const supabase = await createClient();
+
+  const { error } =
+    hours === null || hours <= 0
+      ? await supabase.from("daily_plans").delete().eq("category_id", categoryId).eq("plan_date", date)
+      : await supabase.from("daily_plans").upsert(
+          {
+            category_id: categoryId,
+            plan_date: date,
+            // A day has 24 hours
+            planned_hours: Math.round(Math.min(24, hours) * 100) / 100,
+          },
+          { onConflict: "category_id,plan_date" }
+        );
+
+  if (error) {
+    console.error("Could not save day plan:", error.message);
+    return { error: "Couldn't save. Try again." };
+  }
+
+  revalidatePath("/budget");
+  return {};
+}
+
 // Start a week with the previous week's goals
 export async function copyLastWeekGoals(formData: FormData) {
   const weekStart = String(formData.get("week_start") ?? "");
