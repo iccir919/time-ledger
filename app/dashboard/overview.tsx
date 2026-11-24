@@ -301,12 +301,12 @@ export default async function Overview({ userId, timeZone, week }: OverviewProps
                           {row.name}
                         </span>
                         <span className="shrink-0 tabular-nums">
-                          <span className={isLimit && row.done > row.goal ? "text-rose-600" : ""}>
+                          <span>
                             {Number(row.done.toFixed(2))}
                           </span>
                           <span className="text-stone-500">
-                            {" "}
-                            of {formatHours(row.goal)}
+                            {isLimit && row.done > row.goal ? " over " : " of "}
+                            {formatHours(row.goal)}
                             {isLimit ? " max" : ""}
                           </span>
                         </span>
@@ -320,9 +320,12 @@ export default async function Overview({ userId, timeZone, week }: OverviewProps
                         color={row.color}
                         className="mt-1.5"
                       />
-                      <p className="mt-1 text-xs">
-                        <GoalStatusLabel status={status} />
-                      </p>
+                      {/* "Over limit" is already said by "4.5 over 0h max" above */}
+                      {status.tone !== "over" && (
+                        <p className="mt-1 text-xs">
+                          <GoalStatusLabel status={status} />
+                        </p>
+                      )}
                     </li>
                   );
                 })}

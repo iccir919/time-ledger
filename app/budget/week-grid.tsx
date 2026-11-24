@@ -14,7 +14,7 @@ import WeekCalendar, { type CalendarBlock } from "./week-calendar";
 // (No "grid" here, so the "now" row can switch between hidden and grid; GRID adds it.)
 // (Written out in full, because Tailwind only finds class names it can see whole in the code.)
 const COLUMNS =
-  "items-center gap-2 grid-cols-[minmax(5.5rem,9rem)_7.5rem_minmax(7rem,9rem)_minmax(5.5rem,6.5rem)] lg:grid-cols-[minmax(6rem,9rem)_7.5rem_minmax(7rem,9rem)_repeat(3,minmax(5.5rem,6.5rem))] xl:grid-cols-[minmax(6rem,9rem)_7.5rem_minmax(7rem,9rem)_repeat(5,minmax(5.5rem,6.5rem))] 2xl:grid-cols-[minmax(6rem,9rem)_7.5rem_minmax(7rem,9rem)_repeat(7,minmax(5.5rem,6.5rem))]";
+  "items-center gap-2 grid-cols-[minmax(5.5rem,9rem)_8rem_minmax(7rem,9rem)_minmax(5.5rem,6.5rem)] lg:grid-cols-[minmax(6rem,9rem)_8rem_minmax(7rem,9rem)_repeat(3,minmax(5.5rem,6.5rem))] xl:grid-cols-[minmax(6rem,9rem)_8rem_minmax(7rem,9rem)_repeat(5,minmax(5.5rem,6.5rem))] 2xl:grid-cols-[minmax(6rem,9rem)_8rem_minmax(7rem,9rem)_repeat(7,minmax(5.5rem,6.5rem))]";
 
 // The days shown at each screen size: a run of `count` days around the selected one,
 // kept inside the week. Bigger runs always include the smaller ones.
@@ -63,6 +63,8 @@ type WeekGridProps = {
   actual: Record<string, number>;
   typed: Record<string, number>;
   scheduled: Record<string, number>;
+  // The part of the scheduled hours still after now (all of it on later days)
+  scheduledAhead: Record<string, number>;
   // The week's tracked events and plan blocks, for the day panel's calendar
   blocks: CalendarBlock[];
   // Adding plan blocks needs a Plan calendar
@@ -91,15 +93,14 @@ function asText(values: Record<string, number>) {
   return text;
 }
 
-// "" (empty field) -> null; anything else -> a number of hours, never below 0
+// "" (empty field) -> null; anything else -> a number of hours, never below 0 ("1,5" works too)
 function hoursOrNull(text: string | undefined) {
-  const trimmed = (text ?? "").trim();
+  const trimmed = (text ?? "").trim().replace(",", ".");
   return trimmed === "" ? null : Math.max(0, Number(trimmed) || 0);
 }
 
 // The selected category on the selected day, in words, for the top of the day panel
-function daySummary(kind: DayKind, done: number, planned: number, scheduled: number) {
-  const toSchedule = Math.max(planned - scheduled, 0);
+function daySummary(kind: DayKind, done: number, planned: number) {
   if (kind === "past") {
     if (planned > 0) {
       return done >= planned
@@ -109,35 +110,62 @@ function daySummary(kind: DayKind, done: number, planned: number, scheduled: num
     return done > 0 ? `${formatHours(done)} done` : "Nothing tracked";
   }
   const parts = [planned > 0 ? `${formatHours(planned)} planned` : "Nothing planned yet"];
-  if (planned > 0) {
-    parts.push(toSchedule > 0 ? `${formatHours(toSchedule)} to schedule` : "all scheduled");
-  }
   if (kind === "today" && done > 0) {
     parts.push(`${formatHours(done)} done`);
   }
   return parts.join(" · ");
 }
 
-// A bar: solid = done, light = planned. Used in the header and the week column.
-function Bar({
+// The header's bar for the whole week, with a 0 mark. To the right of 0: progress toward
+// min goals (solid = done, light = planned ahead). To the left of 0, below zero: time past
+// max limits (the week's time debt), striped in gray.
+// The total of the goals is labeled at the end; hovering shows the details in words.
+function WeekBar({
   done,
-  planned,
+  ahead,
   total,
-  color,
-  className,
+  over,
+  details,
 }: {
   done: number;
-  planned: number;
+  ahead: number;
   total: number;
-  color: string;
-  className: string;
+  over: number;
+  details: string;
 }) {
-  const percent = (hours: number) => `${Math.min(hours / total, 1) * 100}%`;
+  const span = Math.max(over + total, 0.01);
+  const percent = (hours: number) => `${(hours / span) * 100}%`;
+  const zero = percent(over);
 
   return (
-    <div className={`flex overflow-hidden rounded-full bg-stone-100 ${className}`}>
-      <span style={{ width: percent(done), backgroundColor: color }} />
-      <span style={{ width: percent(planned), backgroundColor: `${color}55` }} />
+    <div title={details} aria-label={details} className="relative mt-3 mb-4 h-2 cursor-default rounded-full bg-stone-100">
+      {over > 0 && (
+        <span
+          className="absolute inset-y-0 left-0 rounded-l-full"
+          style={{
+            width: zero,
+            background: "repeating-linear-gradient(135deg, #a8a29e 0 3px, #e7e5e4 3px 6px)",
+          }}
+        />
+      )}
+      <span className="absolute inset-y-0 bg-[#2f6f68]" style={{ left: zero, width: percent(done) }} />
+      <span
+        className="absolute inset-y-0 bg-[#2f6f68]/35"
+        style={{ left: `calc(${zero} + ${percent(done)})`, width: percent(ahead) }}
+      />
+      {/* The 0 mark, only needed when there's something below zero */}
+      {over > 0 && (
+        <>
+          <span className="absolute -inset-y-1 border-l-2 border-stone-700" style={{ left: zero }} />
+          <span className="absolute top-3.5 -translate-x-1/2 text-[10px] leading-none text-stone-400" style={{ left: zero }}>
+            0
+          </span>
+        </>
+      )}
+      {/* The goals' total at the end of the bar */}
+      {total > 0 && (
+        <span className="absolute right-0 top-3.5 text-[10px] leading-none text-stone-400">{formatHours(total)}</span>
+      )}
     </div>
   );
 }
@@ -149,11 +177,10 @@ export default function WeekGrid({
   today,
   goals,
   directions,
-  planned,
-  plannedAhead,
   actual,
   typed,
   scheduled,
+  scheduledAhead,
   blocks,
   canAddBlocks,
   timeZone,
@@ -183,7 +210,7 @@ export default function WeekGrid({
       return next;
     });
   }
-  // Each goal's direction, flipped right away by its min / max switch
+  // Each goal's direction, flipped right away by its goal / limit switch
   const [directionById, setDirectionById] = useState<Record<string, GoalDirection>>(directions);
   const [lastDirections, setLastDirections] = useState(directions);
   if (directions !== lastDirections) {
@@ -215,25 +242,23 @@ export default function WeekGrid({
   const actualAt = read(actual);
   const scheduledAt = read(scheduled);
 
-  // A day's plan and the part still ahead use what's typed right now, so a cell reacts as you type
-  const plannedAt = (key: string) => {
-    const typedNow = hoursOrNull(dayText[key]);
-    return typedNow === null ? (planned[key] ?? 0) : Math.max(typedNow, scheduledAt(key));
-  };
-  const aheadAt = (key: string, date: string) => {
-    const typedNow = hoursOrNull(dayText[key]);
-    if (typedNow === null || date < today) {
-      return plannedAhead[key] ?? 0;
-    }
-    const plan = Math.max(typedNow, scheduledAt(key));
-    if (date > today) {
-      return plan;
-    }
-    // Today: the blocks still ahead (from the server) plus typed hours not scheduled yet
-    const blocksAhead = Math.max((plannedAhead[key] ?? 0) - Math.max((typed[key] ?? 0) - scheduledAt(key), 0), 0);
-    return blocksAhead + Math.max(typedNow - scheduledAt(key), 0);
-  };
+  const scheduledAheadAt = read(scheduledAhead);
+  // What's typed in a day right now (0 when empty), so cells react as you type
+  const typedAt = (key: string) => hoursOrNull(dayText[key]) ?? 0;
 
+  // A day's plan: the bigger of what's typed and what's scheduled
+  const plannedAt = (key: string) => Math.max(typedAt(key), scheduledAt(key));
+  // The part of a day's plan still ahead: later days count all of it; today counts what's typed
+  // minus what's already done, or the blocks still ahead if that's more; past days count none
+  const aheadAt = (key: string, date: string) => {
+    if (date < today) {
+      return 0;
+    }
+    if (date > today) {
+      return plannedAt(key);
+    }
+    return Math.max(typedAt(key) - actualAt(key), scheduledAheadAt(key));
+  };
   const weekTotal = (categoryId: string, at: (key: string, date: string) => number) =>
     days.reduce((sum, day) => sum + at(cellKey(categoryId, day.date), day.date), 0);
 
@@ -256,8 +281,8 @@ export default function WeekGrid({
       direction: directionFor(category.id),
     }));
   const progress = goalProgress(goalRows);
-  // "At most" goals that went over, for the callout in the header
-  const overs = overLimits(goalRows);
+  // Time past "at most" limits, added up: the week's time debt, shown below zero in the header
+  const overTotal = overLimits(goalRows).reduce((sum, row) => sum + (row.done - row.goal), 0);
 
   // The selected day (shown in the panel) and the category clicked, if any.
   // Starts on today, or the first day when viewing another week.
@@ -273,6 +298,13 @@ export default function WeekGrid({
       setSelected((current) => ({ ...current, date: days[index].date }));
     }
   }
+
+  // The day column under the pointer: its background gets a soft highlight (see DayColumns)
+  const [hoveredDate, setHoveredDate] = useState<string | null>(null);
+  const hoverProps = (date: string) => ({
+    onMouseEnter: () => setHoveredDate(date),
+    onMouseLeave: () => setHoveredDate((current) => (current === date ? null : current)),
+  });
 
   // Dates are "YYYY-MM-DD", so comparing them as text puts them in order
   const kindOf = (date: string): DayKind => (date === today ? "today" : date > today ? "future" : "past");
@@ -335,7 +367,7 @@ export default function WeekGrid({
     }
   }
 
-  // The min / max switch: flip the direction and save it with the goal
+  // The goal / limit switch: flip the direction and save it with the goal
   function flipDirection(categoryId: string) {
     const next: GoalDirection = (directionById[categoryId] ?? "at_least") === "at_least" ? "at_most" : "at_least";
     setDirectionById((current) => ({ ...current, [categoryId]: next }));
@@ -363,37 +395,37 @@ export default function WeekGrid({
               {formatHours(aheadTotal)}
             </p>
           </div>
+          {/* Time past limits, as a negative number, kept quiet. Only shows when something went over. */}
+          {overTotal > 0 && (
+            <div>
+              <p className="text-sm text-stone-500">Over limit</p>
+              <p className="mt-1 text-3xl font-semibold tabular-nums text-stone-400">−{formatHours(overTotal)}</p>
+            </div>
+          )}
         </div>
 
         {/* Goal progress, beside the numbers (under them on narrow screens) */}
-        {progress ? (
+        {progress || overTotal > 0 ? (
           <div className="min-w-64 flex-1 md:border-l md:border-stone-100 md:pl-10">
-            <p className="flex flex-wrap items-center gap-x-3 text-sm text-stone-600">
-              <span>
-                Goals: <span className="font-medium text-stone-900">{Number(progress.done.toFixed(2))}</span> of{" "}
-                {formatHours(progress.total)}
-              </span>
-              <GoalStatusLabel status={progress.status} />
-            </p>
-            <Bar
-              done={progress.done}
-              planned={progress.ahead}
-              total={progress.total}
-              color="#2f6f68"
-              className="mt-2 h-2"
+            <p className="text-sm text-stone-500">Goals</p>
+            {/* The details are on hover, to keep the header quiet */}
+            <WeekBar
+              done={progress?.done ?? 0}
+              ahead={progress?.ahead ?? 0}
+              total={progress?.total ?? 0}
+              over={overTotal}
+              details={[
+                progress ? `${num(progress.done)} of ${formatHours(progress.total)} done` : null,
+                progress ? progress.status.text : null,
+                overTotal > 0 ? `${formatHours(overTotal)} over limit` : null,
+              ]
+                .filter(Boolean)
+                .join(" · ")}
             />
           </div>
         ) : (
           <p className="min-w-64 flex-1 text-sm text-stone-500 md:border-l md:border-stone-100 md:pl-10">
-            {overs.length === 0 && "Set a weekly goal below to see your progress here."}
-          </p>
-        )}
-
-        {/* Limits that went over, so they're seen without scrolling */}
-        {overs.length > 0 && (
-          <p className="w-full rounded-full bg-rose-50 px-3 py-1 text-sm text-rose-700 md:ml-auto md:w-auto">
-            {overs.length} over limit:{" "}
-            {overs.map((row) => `${row.name} +${formatHours(row.done - row.goal)}`).join(", ")}
+            Set a weekly goal below to see your progress here.
           </p>
         )}
       </div>
@@ -404,9 +436,39 @@ export default function WeekGrid({
 
       {/* One card: the grid, then the selected day's calendar attached right after the days
           (below the grid on phones) */}
-      <div className="mt-3 overflow-hidden rounded-xl border border-stone-200 bg-white md:grid md:grid-cols-[auto_minmax(14rem,1fr)]">
-        <div className="overflow-x-auto">
-          <div className="p-4">
+      {/* (Nothing here clips or scrolls on tablets and up, so the headers can stick to the top of the
+          window. Phones keep sideways scrolling for the grid, so they don't get sticky headers.) */}
+      <div className="mt-3 overflow-hidden rounded-xl border border-stone-200 bg-white md:grid md:grid-cols-[auto_minmax(14rem,1fr)] md:overflow-visible">
+        <div className="overflow-x-auto md:overflow-visible">
+          <div className="relative px-4 pb-4">
+            {/* Full-height backgrounds behind each day's column: a soft highlight on hover (and on the
+                selected day), and clicking anywhere in the column, gaps included, shows that day */}
+            <div className={`${GRID} pointer-events-none absolute inset-y-0 left-4 right-4`}>
+              <span />
+              <span />
+              <span />
+              {days.map((day) => (
+                <button
+                  key={day.date}
+                  type="button"
+                  tabIndex={-1}
+                  aria-hidden="true"
+                  {...hoverProps(day.date)}
+                  onClick={() => setSelected((current) => ({ ...current, date: day.date }))}
+                  className={`pointer-events-auto self-stretch rounded-lg transition-colors ${dayClass(day.date)} ${
+                    // (The tiles have borders, so they still show on top of this)
+                    hoveredDate === day.date
+                      ? "bg-stone-100"
+                      : day.date === selected.date
+                        ? "bg-accent-soft/30"
+                        : ""
+                  }`}
+                />
+              ))}
+            </div>
+
+            {/* The "now" line and the column headers stay at the top of the window while you scroll */}
+            <div className="sticky top-0 z-10 rounded-tl-xl bg-white pt-4">
             {/* The "now" line: past days show what happened, later days show what's planned */}
             <NowBand dates={[selected.date]} today={today} className="grid lg:hidden" />
             <NowBand dates={windows.lg} today={today} className="hidden lg:grid xl:hidden" />
@@ -422,15 +484,17 @@ export default function WeekGrid({
                 <span key={day.date} className={dayClass(day.date)}>
                   <button
                     type="button"
+                    {...hoverProps(day.date)}
                     onClick={() => setSelected({ date: day.date, categoryId: null })}
-                    className={`w-full rounded-md py-1 text-center ${
-                      day.date === today ? "bg-accent-soft font-semibold text-accent" : "hover:bg-stone-100"
+                    className={`w-full rounded-md py-1.5 text-center text-base font-medium ${
+                      day.date === today ? "bg-accent-soft font-semibold text-accent" : "text-stone-600"
                     } ${day.date === selected.date ? "ring-2 ring-accent/40" : ""}`}
                   >
                     {day.weekday} {day.dayNumber}
                   </button>
                 </span>
               ))}
+            </div>
             </div>
 
             {groups.map((group) => (
@@ -447,7 +511,9 @@ export default function WeekGrid({
                   const fieldStatus = goalStatusById[category.id];
 
                   return (
-                    <div key={category.id} className={`${GRID} py-2`}>
+                    // Positioned so it sits above the column backgrounds; the row itself lets clicks through
+                    // (to the column behind), while everything in it still takes them
+                    <div key={category.id} className={`${GRID} pointer-events-none relative py-2 *:pointer-events-auto`}>
                       <span className="flex items-center gap-2 px-1 text-sm">
                         <span
                           className="size-2.5 shrink-0 rounded-full"
@@ -463,13 +529,13 @@ export default function WeekGrid({
                           type="button"
                           onClick={() => flipDirection(category.id)}
                           disabled={goal === 0}
-                          title={isLimit ? "Max: at most this many hours (a limit). Click for min." : "Min: at least this many hours. Click for max."}
-                          aria-label={`${category.name} goal is ${isLimit ? "at most" : "at least"}. Switch.`}
-                          className={`-mr-px h-[30px] w-9 shrink-0 rounded-l-md border text-xs font-medium ${
-                            isLimit ? "border-rose-200 bg-rose-50 text-rose-700" : "border-accent/40 bg-white text-accent"
+                          title={isLimit ? "Limit: at most this many hours. Click to make it a goal." : "Goal: at least this many hours. Click to make it a limit."}
+                          aria-label={`${category.name} is a ${isLimit ? "limit (at most)" : "goal (at least)"}. Switch.`}
+                          className={`-mr-px h-[30px] w-11 shrink-0 rounded-l-md border text-xs font-medium ${
+                            "border-accent/40 bg-white text-stone-500"
                           } hover:brightness-95 disabled:cursor-default disabled:opacity-70`}
                         >
-                          {isLimit ? "max" : "min"}
+                          {isLimit ? "limit" : "goal"}
                         </button>
                       <HoursField
                         value={goalText[category.id] ?? ""}
@@ -486,22 +552,19 @@ export default function WeekGrid({
                       </div>
 
                       {/* Week: done of goal, the bar, then the status (gray text, colored dot) */}
-                      <div className="pl-1 text-sm leading-snug">
+                      <div className="flex min-h-14 flex-col justify-center pl-1 text-sm leading-snug">
                         {goal === null ? (
                           <p className={done > 0 ? "text-stone-600" : "text-stone-300"}>
                             {done > 0 ? `${formatHours(done)} done` : "–"}
                           </p>
                         ) : (
                           <>
+                            {/* "2 of 3h max", or "4.5 over 0h max" once a limit is passed */}
                             <p>
-                              <span
-                                className={`font-medium ${isLimit && done > goal ? "text-rose-600" : "text-stone-900"}`}
-                              >
-                                {num(done)}
-                              </span>
+                              <span className="font-medium text-stone-900">{num(done)}</span>
                               <span className="text-stone-500">
-                                {" "}
-                                of {formatHours(goal)}
+                                {isLimit && done > goal ? " over " : " of "}
+                                {formatHours(goal)}
                                 {isLimit ? " max" : ""}
                               </span>
                             </p>
@@ -515,7 +578,8 @@ export default function WeekGrid({
                             />
                           </>
                         )}
-                        {weekly && (
+                        {/* "Over limit" stays out: the line above already says it */}
+                        {weekly && weekly.tone !== "over" && (
                           <p className="mt-1 text-xs">
                             <GoalStatusLabel status={weekly} />
                           </p>
@@ -543,6 +607,7 @@ export default function WeekGrid({
                                 .filter((d) => d.date < day.date)
                                 .reduce((sum, d) => sum + actualAt(cellKey(category.id, d.date)), 0)}
                               selected={isSelected}
+                              hoverProps={hoverProps(day.date)}
                               className={dayClass(day.date, "flex")}
                               onSelect={select}
                             />
@@ -550,10 +615,14 @@ export default function WeekGrid({
                         }
 
                         return (
+                          // A fixed size, so typing doesn't change it. Clicking anywhere on the tile
+                          // types into it (and shows that day in the calendar).
                           <div
                             key={day.date}
-                            className={`flex min-h-12 flex-col items-center justify-center gap-0.5 rounded-md px-1 py-1 ${
-                              kind === "today" ? "bg-accent-soft/60" : ""
+                            {...hoverProps(day.date)}
+                            onClick={(event) => event.currentTarget.querySelector("input")?.focus()}
+                            className={`flex h-14 cursor-pointer flex-col items-center justify-center gap-1 rounded-md border border-stone-200 px-1 ${
+                              kind === "today" ? "bg-accent-soft/60" : "bg-stone-100/70"
                             } ${isSelected ? "ring-2 ring-accent" : ""} ${dayClass(day.date, "flex")}`}
                           >
                             <HoursField
@@ -571,13 +640,7 @@ export default function WeekGrid({
                               status={dayStatus[key]}
                               compact
                             />
-                            <DayNote
-                              kind={kind}
-                              planned={dayPlan}
-                              scheduled={scheduledAt(key)}
-                              done={actualAt(key)}
-                              typedSomething={hoursOrNull(dayText[key]) !== null}
-                            />
+                            <DayNote kind={kind} scheduled={scheduledAt(key)} done={actualAt(key)} />
                           </div>
                         );
                       })}
@@ -589,7 +652,7 @@ export default function WeekGrid({
             ))}
 
             {/* Totals per day: done for past days and today, planned for later days */}
-            <div className={`${GRID} border-t border-stone-200 pt-2 text-sm font-semibold`}>
+            <div className={`${GRID} pointer-events-none relative border-t border-stone-200 pt-2 text-sm font-semibold *:pointer-events-auto`}>
               <span className="px-1">Total</span>
               <span className="pr-5 text-right tabular-nums">{formatHours(goalTotal)}</span>
               <span />
@@ -599,13 +662,17 @@ export default function WeekGrid({
                   const key = cellKey(category.id, day.date);
                   return sum + (future ? plannedAt(key) : actualAt(key));
                 }, 0);
+                // Clicking a total shows that day in the calendar, like its header
                 return (
-                  <span
+                  <button
+                    type="button"
                     key={day.date}
-                    className={`text-center tabular-nums ${dayClass(day.date)} ${future ? "font-normal text-stone-400" : ""}`}
+                    {...hoverProps(day.date)}
+                    onClick={() => setSelected({ date: day.date, categoryId: null })}
+                    className={`rounded-md py-1 text-center tabular-nums ${dayClass(day.date)} ${future ? "font-normal text-stone-400" : ""}`}
                   >
                     {total > 0 ? formatHours(total) : "–"}
-                  </span>
+                  </button>
                 );
               })}
             </div>
@@ -636,12 +703,7 @@ export default function WeekGrid({
                 {selectedCategory.name}
               </p>
               <p className="mt-0.5 text-xs leading-relaxed text-stone-600">
-                {daySummary(
-                  selectedKind,
-                  actualAt(selectedKey),
-                  plannedAt(selectedKey),
-                  scheduledAt(selectedKey)
-                )}
+                {daySummary(selectedKind, actualAt(selectedKey), plannedAt(selectedKey))}
               </p>
             </div>
           )}
@@ -700,7 +762,7 @@ type HoursFieldProps = {
   // The goal field: tinted and outlined. Day fields are lighter.
   tinted?: boolean;
   compact?: boolean;
-  // Joined to a button on its left (the goal's min / max switch)
+  // Joined to a button on its left (the goal's goal / limit switch)
   attached?: boolean;
 };
 
@@ -721,8 +783,11 @@ function HoursField({
   return (
     <div className="relative w-full">
       <input
-        type="number"
+        // Text, not a number field: a number field changes its value when you scroll over it.
+        // inputMode still brings up the number keypad on phones.
+        type="text"
         inputMode="decimal"
+        autoComplete="off"
         value={value}
         onChange={(event) => onChange(event.target.value)}
         onFocus={onFocus}
@@ -732,9 +797,7 @@ function HoursField({
             event.currentTarget.blur();
           }
         }}
-        min={0}
-        max={max}
-        step={0.25}
+        maxLength={5}
         placeholder={placeholder}
         aria-label={label}
         className={`w-full appearance-none border ${attached ? "rounded-r-md" : "rounded-md"} text-right text-sm font-medium tabular-nums outline-none [-moz-appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none placeholder:font-normal placeholder:text-stone-400 focus:bg-white focus:ring-2 focus:ring-accent/30 ${
@@ -758,43 +821,26 @@ function HoursField({
   );
 }
 
-// The small line under a typed day: how the day's plan compares with its blocks (and, today, what's done)
-function DayNote({
-  kind,
-  planned,
-  scheduled,
-  done,
-  typedSomething,
-}: {
-  kind: "today" | "future";
-  planned: number;
-  scheduled: number;
-  done: number;
-  typedSomething: boolean;
-}) {
+// The small line under a typed day: what's done (today), or how much is on the Plan calendar
+function DayNote({ kind, scheduled, done }: { kind: "today" | "future"; scheduled: number; done: number }) {
   let text = "";
   let tone = "text-stone-400";
 
-  if (planned > scheduled) {
-    text = `${num(planned - scheduled)}h to schedule`;
-    tone = "text-amber-600";
-  } else if (kind === "today" && done > 0) {
+  if (kind === "today" && done > 0) {
     text = `${num(done)}h done`;
     tone = "text-accent";
   } else if (scheduled > 0) {
-    // Blocks cover the plan: "all scheduled" if you typed it, otherwise just how much is scheduled
-    text = typedSomething ? "all scheduled" : "scheduled";
-    tone = typedSomething ? "text-accent" : "text-stone-400";
+    text = `${num(scheduled)}h planned`;
   }
 
-  if (!text) {
-    return null;
-  }
-  return <span className={`text-center text-[11px] leading-tight ${tone}`}>{text}</span>;
+  // Always takes one line (even when empty), so the field above never moves
+  return (
+    <span className={`block h-3.5 max-w-full truncate text-center text-[11px] leading-3.5 ${tone}`}>{text}</span>
+  );
 }
 
 // A past day for one category, in words: done, compared with the plan if there was one.
-// If this day took the week past its goal, it says so: "over limit" (rose) for an "at most"
+// If this day took the week past its goal, it says so: "over limit" for an "at most"
 // goal, "extra" for an "at least" one.
 function PastCell({
   label,
@@ -804,6 +850,7 @@ function PastCell({
   direction,
   doneBefore,
   selected,
+  hoverProps,
   className,
   onSelect,
 }: {
@@ -815,6 +862,7 @@ function PastCell({
   direction: GoalDirection;
   doneBefore: number;
   selected: boolean;
+  hoverProps: { onMouseEnter: () => void; onMouseLeave: () => void };
   className: string;
   onSelect: () => void;
 }) {
@@ -828,15 +876,14 @@ function PastCell({
 
   if (wentPast && direction === "at_most") {
     // Over a limit comes first: it's the thing to notice
-    mainTone = "text-rose-600";
-    note = { text: doneBefore >= goal! ? "over limit" : `+${num(pastBy)}h over`, tone: "text-rose-600" };
+    note = { text: doneBefore >= goal! ? "over limit" : `+${num(pastBy)}h over`, tone: "text-stone-500" };
   } else if (planned > 0) {
     if (done >= planned) {
       note = { text: "all done", tone: "text-accent" };
     } else {
       main = `${num(done)} of ${num(planned)}h`;
       mainTone = "text-stone-900";
-      note = { text: `${num(planned - done)}h missed`, tone: "text-amber-600" };
+      note = { text: `${num(planned - done)}h missed`, tone: "text-stone-500" };
     }
   } else if (wentPast) {
     note = { text: doneBefore >= goal! ? "extra" : `+${num(pastBy)}h extra`, tone: "text-stone-500" };
@@ -850,12 +897,13 @@ function PastCell({
       onClick={onSelect}
       aria-label={`${label}: ${main}${note ? `, ${note.text}` : ""}. Show this day.`}
       aria-pressed={selected}
-      className={`flex min-h-12 flex-col items-center justify-center rounded-md px-1 py-1 text-center tabular-nums leading-tight hover:bg-stone-50 ${
+      {...hoverProps}
+      className={`flex h-14 flex-col items-center justify-center gap-1 rounded-md border border-stone-200 bg-stone-100/70 px-1 text-center tabular-nums leading-tight ${
         selected ? "ring-2 ring-accent" : ""
       } ${className}`}
     >
       <span className={`whitespace-nowrap text-sm ${mainTone}`}>{main}</span>
-      {note && <span className={`text-[11px] ${note.tone}`}>{note.text}</span>}
+      {note && <span className={`block max-w-full truncate text-[11px] leading-3.5 ${note.tone}`}>{note.text}</span>}
     </button>
   );
 }

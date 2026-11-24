@@ -1,4 +1,4 @@
-import { directionOf, type GoalDirection } from "@/lib/goals";
+import type { GoalDirection } from "@/lib/goals";
 
 type GoalBarProps = {
   goal: number;
@@ -10,11 +10,11 @@ type GoalBarProps = {
   className?: string;
 };
 
-// A week's progress toward a goal. Solid = done, light = planned ahead, and a line marks the goal.
-// Going past the goal shows past the line: striped in the category's color for an "at least"
-// goal (extra), rose for an "at most" limit (over). Used by the Plan grid and the dashboard.
-export default function GoalBar({ goal, done, ahead, direction, color, className = "" }: GoalBarProps) {
-  const isLimit = directionOf(goal, direction) === "at_most";
+// A week's progress toward a goal. Used by the Plan grid and the dashboard.
+// Solid = done, light = planned ahead, and a black line marks the goal.
+// Going past the line is striped in the category's color, for both min goals (extra) and
+// max goals (over the limit); the status text under the bar says which.
+export default function GoalBar({ goal, done, ahead, color, className = "" }: GoalBarProps) {
   const past = Math.max(done - goal, 0);
   const doneToGoal = Math.min(done, goal);
   const aheadToGoal = Math.min(ahead, Math.max(goal - done, 0));
@@ -34,13 +34,11 @@ export default function GoalBar({ goal, done, ahead, direction, color, className
       />
       {past > 0 && (
         <span
-          className={`absolute inset-y-0 rounded-r-full ${isLimit ? "bg-rose-500" : ""}`}
+          className="absolute inset-y-0 rounded-r-full"
           style={{
             left: percent(goal),
             width: percent(past),
-            ...(isLimit
-              ? {}
-              : { background: `repeating-linear-gradient(135deg, ${color} 0 3px, ${color}66 3px 6px)` }),
+            background: `repeating-linear-gradient(135deg, ${color} 0 3px, ${color}66 3px 6px)`,
           }}
         />
       )}

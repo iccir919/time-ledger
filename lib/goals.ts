@@ -14,7 +14,8 @@ export function directionOf(goal: number, direction: GoalDirection | null | unde
 
 // "good" shows a teal dot and "attention" an amber one, with gray text.
 // "over" (past an "at most" limit) is rose, dot and text, so it stands apart.
-export type GoalStatus = { text: string; tone: "good" | "attention" | "over" };
+// "quiet" is a gray dot: plain information, like how many hours are still to go.
+export type GoalStatus = { text: string; tone: "good" | "attention" | "over" | "quiet" };
 
 // One category's week
 export function goalStatus(
@@ -40,9 +41,9 @@ export function goalStatus(
   if (done === goal) {
     return { text: "Goal met", tone: "good" };
   }
-  const needs = goal - done - ahead;
-  return needs > 0
-    ? { text: `Needs ${formatHours(needs)} scheduled`, tone: "attention" }
+  // Short of the goal and the plans don't cover it: say how much is left to do
+  return goal - done - ahead > 0
+    ? { text: `${formatHours(goal - done)} to go`, tone: "quiet" }
     : { text: "On track", tone: "good" };
 }
 
@@ -86,7 +87,7 @@ export function goalProgress(
     done >= total
       ? { text: "Goals met", tone: "good" }
       : needs > 0
-        ? { text: `Needs ${formatHours(needs)} scheduled`, tone: "attention" }
+        ? { text: `${formatHours(total - done)} to go`, tone: "quiet" }
         : { text: "On track", tone: "good" };
 
   return { done, ahead, total, count: goals.length, status };

@@ -320,8 +320,8 @@ async function Plan({ userId, timeZone, week, planStatus }: PlanProps) {
 
   // A day's plan is whichever is bigger: the hours typed, or the hours scheduled as blocks.
   // So scheduling hours you already typed doesn't count them twice.
-  // Planned ahead (for the goal statuses): later days count their whole plan; today counts
-  // the blocks still ahead plus any typed hours that aren't scheduled yet; past days count none.
+  // Planned ahead (for the goal statuses): later days count their whole plan; today counts what
+  // you typed minus what's already done, or the blocks still ahead if that's more; past days count none.
   const planned: Record<string, number> = {};
   const plannedAhead: Record<string, number> = {};
   for (const category of categoryById.values()) {
@@ -339,7 +339,7 @@ async function Plan({ userId, timeZone, week, planStatus }: PlanProps) {
         day.date > week.today
           ? plan
           : day.date === week.today
-            ? (scheduledAhead[key] ?? 0) + Math.max(typedHours - scheduledHours, 0)
+            ? Math.max(typedHours - (actual[key] ?? 0), scheduledAhead[key] ?? 0)
             : 0;
       if (ahead > 0) {
         plannedAhead[key] = ahead;
@@ -456,6 +456,7 @@ async function Plan({ userId, timeZone, week, planStatus }: PlanProps) {
         actual={actual}
         typed={typed}
         scheduled={scheduled}
+        scheduledAhead={scheduledAhead}
         blocks={calendarBlocks}
         canAddBlocks={Boolean(planCalendarId) && !planMissing}
         timeZone={timeZone}
