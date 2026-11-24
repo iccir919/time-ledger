@@ -3,6 +3,7 @@
 import { addDays, format, parseISO } from "date-fns";
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
+import type { GoalDirection } from "@/lib/goals";
 import {
   deleteGoogleEvent,
   GoogleApiError,
@@ -15,14 +16,21 @@ const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 
 export type GoalResult = { error?: string };
 
-// Save one category's goal for one week. Called as soon as a goal field loses focus.
-// null (an emptied field) removes the goal; 0 is a real goal of zero hours, like a limit.
+// Save one category's goal for one week: its hours and which way it points.
+// Called when a goal field loses focus or its min / max switch is clicked.
+// null (an emptied field) removes the goal; 0 is a real goal of zero hours, always "at most".
 export async function saveGoal(
   weekStart: string,
   categoryId: string,
-  hours: number | null
+  hours: number | null,
+  direction: GoalDirection = "at_least"
 ): Promise<GoalResult> {
-  if (!DATE_PATTERN.test(weekStart) || !categoryId || (hours !== null && !Number.isFinite(hours))) {
+  if (
+    !DATE_PATTERN.test(weekStart) ||
+    !categoryId ||
+    (hours !== null && !Number.isFinite(hours)) ||
+    (direction !== "at_least" && direction !== "at_most")
+  ) {
     return { error: "Couldn't save that goal." };
   }
 
@@ -41,6 +49,7 @@ export async function saveGoal(
             week_start: weekStart,
             // A week has 168 hours
             planned_hours: Math.round(Math.min(168, Math.max(0, hours)) * 100) / 100,
+            direction: hours === 0 ? "at_most" : direction,
           },
           { onConflict: "category_id,week_start" }
         );
@@ -101,9 +110,8 @@ export async function copyLastWeekGoals(formData: FormData) {
   const supabase = await createClient();
   const { data: previous, error } = await supabase
     .from("weekly_budgets")
-    .select("category_id, planned_hours")
-    .eq("week_start", previousWeekStart)
-    .gt("planned_hours", 0);
+    .select("category_id, planned_hours, direction")
+    .eq("week_start", previousWeekStart);
 
   if (error) {
     throw new Error(error.message);
@@ -117,6 +125,7 @@ export async function copyLastWeekGoals(formData: FormData) {
     previous.map((row) => ({
       category_id: row.category_id,
       planned_hours: row.planned_hours,
+      direction: row.direction,
       week_start: weekStart,
     })),
     { onConflict: "category_id,week_start" }

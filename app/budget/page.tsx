@@ -16,6 +16,7 @@ import { createPlanCalendar } from "@/app/calendars/actions";
 import WeekGrid from "./week-grid";
 import type { CalendarBlock } from "./week-calendar";
 import { NO_CATEGORY_COLOR } from "@/lib/calendar-data";
+import type { GoalDirection } from "@/lib/goals";
 import CalendarView from "./calendar-view";
 
 type BudgetPageProps = {
@@ -56,7 +57,7 @@ export default async function BudgetPage({ searchParams }: BudgetPageProps) {
     <div className="min-h-screen">
       <AppHeader email={user.email} />
 
-      <main className={`mx-auto max-w-5xl px-6 py-12 ${view === "grid" ? "xl:max-w-7xl" : ""}`}>
+      <main className={`mx-auto max-w-5xl px-6 py-12 ${view === "grid" ? "xl:max-w-7xl 2xl:max-w-[88rem]" : ""}`}>
         <h1 className="text-2xl font-semibold tracking-tight">Plan</h1>
 
         {sync === null && (
@@ -150,7 +151,7 @@ async function Plan({ userId, timeZone, week, planStatus }: PlanProps) {
         .order("sort_order", { referencedTable: "categories" }),
       supabase
         .from("weekly_budgets")
-        .select("category_id, planned_hours")
+        .select("category_id, planned_hours, direction")
         .eq("week_start", week.weekStart),
       supabase
         .from("weekly_budgets")
@@ -203,10 +204,12 @@ async function Plan({ userId, timeZone, week, planStatus }: PlanProps) {
     );
   }
 
-  // Weekly goals, keyed by category ID
+  // Weekly goals and which way each points, keyed by category ID
   const goals: Record<string, number> = {};
+  const directions: Record<string, GoalDirection> = {};
   for (const goal of goalsResult.data) {
     goals[goal.category_id] = Number(goal.planned_hours);
+    directions[goal.category_id] = goal.direction === "at_most" ? "at_most" : "at_least";
   }
 
   const categoryById = new Map(
@@ -447,6 +450,7 @@ async function Plan({ userId, timeZone, week, planStatus }: PlanProps) {
         days={days}
         today={week.today}
         goals={goals}
+        directions={directions}
         planned={planned}
         plannedAhead={plannedAhead}
         actual={actual}

@@ -1,8 +1,9 @@
 import Link from "next/link";
 import WeekCalendar from "@/app/budget/week-calendar";
+import GoalBar from "@/components/goal-bar";
 import GoalStatusLabel from "@/components/goal-status-label";
 import { loadCalendarData } from "@/lib/calendar-data";
-import { goalProgress, goalStatus } from "@/lib/goals";
+import { directionOf, goalProgress, goalStatus } from "@/lib/goals";
 import { formatHours, hoursWithin } from "@/lib/hours";
 import { createClient } from "@/lib/supabase/server";
 import { loadTrends } from "@/lib/trends";
@@ -27,7 +28,7 @@ export default async function Overview({ userId, timeZone, week }: OverviewProps
       loadCalendarData(userId, timeZone, week),
       supabase
         .from("weekly_budgets")
-        .select("category_id, planned_hours")
+        .select("category_id, planned_hours, direction")
         .eq("week_start", week.weekStart),
       supabase
         .from("weekly_budgets")
@@ -81,14 +82,16 @@ export default async function Overview({ userId, timeZone, week }: OverviewProps
   }
 
   // Goals for categories that have one (0 counts: it's a limit), in category order
-  const goalByCategory = new Map(
-    goalsResult.data.map((goal) => [goal.category_id, Number(goal.planned_hours)])
-  );
+  const goalByCategory = new Map(goalsResult.data.map((goal) => [goal.category_id, goal]));
   const goalRows = categories
     .filter((category) => goalByCategory.has(category.id))
     .map((category) => ({
       ...category,
-      goal: goalByCategory.get(category.id)!,
+      goal: Number(goalByCategory.get(category.id)!.planned_hours),
+      direction: directionOf(
+        Number(goalByCategory.get(category.id)!.planned_hours),
+        goalByCategory.get(category.id)!.direction === "at_most" ? "at_most" : "at_least"
+      ),
       done: doneByCategory.get(category.id) ?? 0,
       ahead: aheadByCategory.get(category.id) ?? 0,
     }));
@@ -284,8 +287,8 @@ export default async function Overview({ userId, timeZone, week }: OverviewProps
             ) : (
               <ul className="mt-3 space-y-3">
                 {goalRows.map((row) => {
-                  const status = goalStatus(row.goal, row.done, row.ahead);
-                  const isLimit = row.goal === 0;
+                  const status = goalStatus(row.goal, row.done, row.ahead, row.direction);
+                  const isLimit = row.direction === "at_most";
                   return (
                     <li key={row.id} className="text-sm">
                       {/* Name and numbers, then the bar, then the status: one line each */}
@@ -298,36 +301,25 @@ export default async function Overview({ userId, timeZone, week }: OverviewProps
                           {row.name}
                         </span>
                         <span className="shrink-0 tabular-nums">
-                          {isLimit ? (
-                            <>
-                              {formatHours(row.done)}
-                              <span className="text-stone-500"> · limit 0h</span>
-                            </>
-                          ) : (
-                            <>
-                              {Number(row.done.toFixed(2))}
-                              <span className="text-stone-500"> of {formatHours(row.goal)}</span>
-                            </>
-                          )}
+                          <span className={isLimit && row.done > row.goal ? "text-rose-600" : ""}>
+                            {Number(row.done.toFixed(2))}
+                          </span>
+                          <span className="text-stone-500">
+                            {" "}
+                            of {formatHours(row.goal)}
+                            {isLimit ? " max" : ""}
+                          </span>
                         </span>
                       </div>
-                      {/* Solid = done, light = planned ahead. No bar for a limit: it can't fill. */}
-                      {!isLimit && (
-                        <div className="mt-1.5 flex h-2 overflow-hidden rounded-full bg-stone-100">
-                          <span
-                            style={{
-                              width: `${Math.min(row.done / row.goal, 1) * 100}%`,
-                              backgroundColor: row.color,
-                            }}
-                          />
-                          <span
-                            style={{
-                              width: `${Math.min(row.ahead / row.goal, 1) * 100}%`,
-                              backgroundColor: `${row.color}55`,
-                            }}
-                          />
-                        </div>
-                      )}
+                      {/* Solid = done, light = planned ahead, a line at the goal, and anything past it */}
+                      <GoalBar
+                        goal={row.goal}
+                        done={row.done}
+                        ahead={row.ahead}
+                        direction={row.direction}
+                        color={row.color}
+                        className="mt-1.5"
+                      />
                       <p className="mt-1 text-xs">
                         <GoalStatusLabel status={status} />
                       </p>
