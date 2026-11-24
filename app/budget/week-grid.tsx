@@ -1,12 +1,13 @@
 "use client";
 
-import { useState } from "react";
+import { useCallback, useState } from "react";
 import GoalStatusLabel from "@/components/goal-status-label";
 import GoalBar from "@/components/goal-bar";
 import { directionOf, goalProgress, goalStatus, overLimits, type GoalDirection } from "@/lib/goals";
 import { formatHours } from "@/lib/hours";
 import { saveDayPlan, saveGoal } from "./actions";
-import WeekCalendar, { type CalendarBlock } from "./week-calendar";
+import PlanBlockDialog, { type BlockDraft } from "./plan-block-dialog";
+import WeekCalendar, { draftAt, type CalendarBlock } from "./week-calendar";
 
 // Columns: name, goal, week, days. The day calendar sits right after the days.
 // How many days show depends on the screen, always around the selected day:
@@ -150,7 +151,7 @@ function WeekBar({
       )}
       <span className="absolute inset-y-0 bg-[#2f6f68]" style={{ left: zero, width: percent(done) }} />
       <span
-        className="absolute inset-y-0 bg-[#2f6f68]/35"
+        className="absolute inset-y-0 bg-[#6f9d94]"
         style={{ left: `calc(${zero} + ${percent(done)})`, width: percent(ahead) }}
       />
       {/* The 0 mark, only needed when there's something below zero */}
@@ -291,6 +292,17 @@ export default function WeekGrid({
     categoryId: null,
   }));
 
+  // A block being added from the panel's "+ Add" button, or null when that popup is closed
+  const [draft, setDraft] = useState<BlockDraft | null>(null);
+  const closeDialog = useCallback(() => setDraft(null), []);
+
+  // "+ Add": a block on the selected day, at the next full hour today or 9 AM on other days,
+  // with the selected category (if any)
+  function addBlock() {
+    const start = selected.date === today && nowMinutes !== null ? Math.ceil(nowMinutes / 60) * 60 : 9 * 60;
+    setDraft({ ...draftAt(selected.date, start), categoryId: selected.categoryId ?? undefined });
+  }
+
   // The panel's ‹ › arrows: the day before or after, keeping the selected category
   function stepDay(offset: number) {
     const index = days.findIndex((day) => day.date === selected.date) + offset;
@@ -391,7 +403,8 @@ export default function WeekGrid({
           </div>
           <div>
             <p className="text-sm text-stone-500">Planned ahead</p>
-            <p className="mt-1 text-3xl font-semibold tabular-nums text-stone-400">
+            {/* The same light teal as the planned part of the Goals bar */}
+            <p className="mt-1 text-3xl font-semibold tabular-nums text-[#6f9d94]">
               {formatHours(aheadTotal)}
             </p>
           </div>
@@ -680,20 +693,32 @@ export default function WeekGrid({
         </div>
 
         {/* The day calendar: the selected day, with every category, to plan around */}
-        <aside className="flex flex-col border-t border-stone-200 p-3 md:border-l md:border-t-0">
+        {/* On wider screens it stays in view while you scroll and is about a screen tall,
+            instead of stretching down the whole grid */}
+        <aside className="flex flex-col border-t border-stone-200 p-3 md:sticky md:top-4 md:h-[calc(100vh-2rem)] md:max-h-[48rem] md:self-start md:border-l md:border-t-0">
           <div className="flex items-center gap-1">
             <ArrowButton
               direction="previous"
               onClick={selectedIndex > 0 ? () => stepDay(-1) : undefined}
             />
-            <h2 className="flex-1 text-center text-sm font-semibold">
-              {selectedKind === "today" ? "Today · " : ""}
-              {selectedDay.label}
+            <h2 className="flex-1 truncate text-center text-sm font-semibold">
+              {/* Short, so it fits beside the arrows and "+ Add"; the calendar below shows the date */}
+              {selectedKind === "today" ? "Today" : `${selectedDay.weekday} ${selectedDay.dayNumber}`}
             </h2>
             <ArrowButton
               direction="next"
               onClick={selectedIndex < days.length - 1 ? () => stepDay(1) : undefined}
             />
+            {/* Small, in the top row. Later an "Add event" button can sit beside it. */}
+            {canAddBlocks && selectedKind !== "past" && (
+              <button
+                type="button"
+                onClick={addBlock}
+                className="ml-1 shrink-0 rounded-md border border-stone-200 px-2 py-1 text-xs font-medium text-accent transition-colors hover:bg-accent-soft"
+              >
+                + Add
+              </button>
+            )}
           </div>
 
           {selectedCategory && selectedKey && (
@@ -708,8 +733,8 @@ export default function WeekGrid({
             </div>
           )}
 
-          {/* As tall as the grid on wider screens (scrolls, starting just before now); fixed on phones */}
-          <div className="relative mt-2 h-[28rem] md:h-auto md:min-h-[22rem] md:flex-1">
+          {/* Fills the rest of the panel on wider screens (scrolls, starting just before now); fixed on phones */}
+          <div className="relative mt-2 h-[28rem] md:h-auto md:min-h-0 md:flex-1">
             <div className="absolute inset-0">
               <WeekCalendar
                 key={selectedDay.date}
@@ -723,12 +748,23 @@ export default function WeekGrid({
                 timeZone={timeZone}
                 fillHeight
                 defaultCategoryId={selected.categoryId ?? undefined}
+                hideAddButton
               />
             </div>
           </div>
           <p className="mt-2 text-xs text-stone-400">Plan on the left, done on the right.</p>
         </aside>
       </div>
+
+      {draft && (
+        <PlanBlockDialog
+          draft={draft}
+          days={days.map((day) => ({ date: day.date, label: day.label }))}
+          groups={groups}
+          timeZone={timeZone}
+          onClose={closeDialog}
+        />
+      )}
     </div>
   );
 }

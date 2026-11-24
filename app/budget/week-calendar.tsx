@@ -65,6 +65,8 @@ type WeekCalendarProps = {
   headerHref?: string;
   // The category new blocks start with, e.g. the one clicked in the Plan grid
   defaultCategoryId?: string;
+  // Leave out the "Add plan block" button below, when the page puts its own elsewhere
+  hideAddButton?: boolean;
 };
 
 // Place one day's blocks: cut them to the day, then put overlapping blocks side by side
@@ -192,6 +194,7 @@ export default function WeekCalendar({
   fillHeight,
   headerHref,
   defaultCategoryId,
+  hideAddButton,
 }: WeekCalendarProps) {
   const planBlocks = blocks.filter((block) => block.kind === "plan");
   const trackedBlocks = blocks.filter((block) => block.kind === "tracked");
@@ -331,7 +334,7 @@ export default function WeekCalendar({
       </div>
 
       {/* Below the calendar, full width. Later an "Add event" button sits beside it. */}
-      {canAddBlocks && (
+      {canAddBlocks && !hideAddButton && (
         <div className="mt-3 flex justify-center gap-3">
           <button
             type="button"
