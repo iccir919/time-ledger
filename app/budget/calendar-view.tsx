@@ -64,6 +64,7 @@ export default async function CalendarView({ userId, timeZone, week }: CalendarV
         canAddBlocks={data.hasPlanCalendar}
         groups={data.groups}
         timeZone={timeZone}
+        showFilter
       />
     </>
   );

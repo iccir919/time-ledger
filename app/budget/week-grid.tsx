@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useState } from "react";
+import { useCallback, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import GoalStatusLabel from "@/components/goal-status-label";
 import GoalBar from "@/components/goal-bar";
 import { directionOf, goalProgress, goalStatus, overLimits, type GoalDirection } from "@/lib/goals";
@@ -9,23 +9,54 @@ import { saveDayPlan, saveGoal } from "./actions";
 import PlanBlockDialog, { type BlockDraft } from "./plan-block-dialog";
 import WeekCalendar, { draftAt, type CalendarBlock } from "./week-calendar";
 
-// Columns: name, goal, week, days. The day calendar sits right after the days.
-// How many days show depends on the screen, always around the selected day:
-// 1 on phones and tablets, 3 on laptops (lg), 5 on wide screens (xl), all 7 on very wide (2xl).
-// (No "grid" here, so the "now" row can switch between hidden and grid; GRID adds it.)
-// (Written out in full, because Tailwind only finds class names it can see whole in the code.)
-const COLUMNS =
-  "items-center gap-2 grid-cols-[minmax(5.5rem,9rem)_8rem_minmax(7rem,9rem)_minmax(5.5rem,6.5rem)] lg:grid-cols-[minmax(6rem,9rem)_8rem_minmax(7rem,9rem)_repeat(3,minmax(5.5rem,6.5rem))] xl:grid-cols-[minmax(6rem,9rem)_8rem_minmax(7rem,9rem)_repeat(5,minmax(5.5rem,6.5rem))] 2xl:grid-cols-[minmax(6rem,9rem)_8rem_minmax(7rem,9rem)_repeat(7,minmax(5.5rem,6.5rem))]";
+// Columns: name, goal, week, then the days, with the selected day's calendar right after the
+// selected day. How many days fit is worked out from the card's width, always centered on the
+// selected day, so days around it drop off as the screen narrows. On narrow screens (phones) the
+// calendar goes under the grid and one day shows.
+const REM = 16;
+const GAP = 8;
+const NAME = 9 * REM;
+const GOAL = 8 * REM;
+const WEEK = 9 * REM;
+const DAY = 6 * REM;
+const CALENDAR_MIN = 16 * REM;
+const PADDING = 2 * REM;
 
-// The days shown at each screen size: a run of `count` days around the selected one,
-// kept inside the week. Bigger runs always include the smaller ones.
+// How the grid is laid out at a given card width
+function layoutFor(width: number | null) {
+  const fixed = PADDING + NAME + GOAL + WEEK + CALENDAR_MIN + 4 * GAP;
+  if (width === null || width < fixed + DAY + GAP) {
+    return { inline: false, dayCount: 1 };
+  }
+  const dayCount = Math.min(Math.max(Math.floor((width - fixed) / (DAY + GAP)), 1), 7);
+  return { inline: true, dayCount };
+}
+
+// The CSS grid columns for a row: fixed columns, the days before the selected one, the selected
+// day, its calendar (when inline), then the days after it
+function columnsFor(before: number, after: number, inline: boolean) {
+  const day = "6rem";
+  if (!inline) {
+    return "minmax(5.5rem,9rem) 8rem minmax(7rem,9rem) minmax(5.5rem,6.5rem)";
+  }
+  return [
+    "minmax(6rem,9rem) 8rem minmax(7rem,9rem)",
+    ...Array.from({ length: before }, () => day),
+    day,
+    "minmax(16rem,1fr)",
+    ...Array.from({ length: after }, () => day),
+  ].join(" ");
+}
+
+// The days shown: a run of `count` days around the selected one, kept inside the week
 function dayWindow(dates: string[], selectedDate: string, count: number) {
   const index = Math.max(dates.indexOf(selectedDate), 0);
   const start = Math.min(Math.max(index - Math.floor(count / 2), 0), Math.max(dates.length - count, 0));
   return dates.slice(start, start + count);
 }
 
-const GRID = `grid ${COLUMNS}`;
+// How tall the calendar beside the selected day is (it stays in view while you scroll)
+const PANEL_HEIGHT = "h-[min(calc(100vh-2rem),46rem)]";
 
 
 type GridDay = {
@@ -323,26 +354,40 @@ export default function WeekGrid({
   // Dates are "YYYY-MM-DD", so comparing them as text puts them in order
   const kindOf = (date: string): DayKind => (date === today ? "today" : date > today ? "future" : "past");
 
-  // Which days show at each screen size (see COLUMNS)
-  const dates = days.map((day) => day.date);
-  const windows = {
-    lg: dayWindow(dates, selected.date, 3),
-    xl: dayWindow(dates, selected.date, 5),
-  };
-  // A day's classes: shown from the smallest screen size whose run includes it.
-  // Cells are flex boxes, so they ask for "flex" instead of "block".
-  const dayClass = (date: string, display: "block" | "flex" = "block") => {
-    if (date === selected.date) {
-      return "";
+  // The card's width, measured, decides how many days fit beside the calendar
+  const cardRef = useRef<HTMLDivElement>(null);
+  const [cardWidth, setCardWidth] = useState<number | null>(null);
+  useLayoutEffect(() => {
+    const card = cardRef.current;
+    if (!card) {
+      return;
     }
-    if (windows.lg.includes(date)) {
-      return display === "flex" ? "hidden lg:flex" : "hidden lg:block";
+    const observer = new ResizeObserver(([entry]) => setCardWidth(entry.contentRect.width));
+    observer.observe(card);
+    return () => observer.disconnect();
+  }, []);
+  const { inline, dayCount } = layoutFor(cardWidth);
+
+  const shownDates = dayWindow(
+    days.map((day) => day.date),
+    selected.date,
+    dayCount
+  );
+  const shownDays = days.filter((day) => shownDates.includes(day.date));
+  const beforeCount = shownDays.filter((day) => day.date < selected.date).length;
+  const template = columnsFor(beforeCount, shownDays.length - beforeCount - 1, inline);
+
+  // A row's day cells in order, with the calendar's cell right after the selected day (when inline)
+  function renderDays(render: (day: GridDay) => ReactNode, calendarCell: ReactNode) {
+    const cells: ReactNode[] = [];
+    for (const day of shownDays) {
+      cells.push(render(day));
+      if (inline && day.date === selected.date) {
+        cells.push(calendarCell);
+      }
     }
-    if (windows.xl.includes(date)) {
-      return display === "flex" ? "hidden xl:flex" : "hidden xl:block";
-    }
-    return display === "flex" ? "hidden 2xl:flex" : "hidden 2xl:block";
-  };
+    return cells;
+  }
 
   // Save one goal when its field loses focus (if it changed) or its direction is flipped
   async function saveGoalField(categoryId: string, direction = directionById[categoryId] ?? "at_least") {
@@ -393,6 +438,70 @@ export default function WeekGrid({
   const selectedKind = kindOf(selectedDay.date);
   const selectedCategory = categories.find((c) => c.id === selected.categoryId) ?? null;
   const selectedKey = selectedCategory ? cellKey(selectedCategory.id, selectedDay.date) : null;
+
+  // The selected day's panel: its title and arrows, "+ Add", a summary for the selected category,
+  // and the day's calendar. Beside the selected day on wider screens, under the grid on phones.
+  const panel = (
+    <>
+      <div className="flex items-center gap-1">
+        <ArrowButton
+          direction="previous"
+          onClick={selectedIndex > 0 ? () => stepDay(-1) : undefined}
+        />
+        <h2 className="flex-1 truncate text-center text-sm font-semibold">
+          {/* Short, so it fits beside the arrows and "+ Add"; the calendar below shows the date */}
+          {selectedKind === "today" ? "Today" : `${selectedDay.weekday} ${selectedDay.dayNumber}`}
+        </h2>
+        <ArrowButton
+          direction="next"
+          onClick={selectedIndex < days.length - 1 ? () => stepDay(1) : undefined}
+        />
+        {/* Small, in the top row. Later an "Add event" button can sit beside it. */}
+        {canAddBlocks && selectedKind !== "past" && (
+          <button
+            type="button"
+            onClick={addBlock}
+            className="ml-1 shrink-0 rounded-md border border-stone-200 px-2 py-1 text-xs font-medium text-accent transition-colors hover:bg-accent-soft"
+          >
+            + Add
+          </button>
+        )}
+      </div>
+
+      {selectedCategory && selectedKey && (
+        <div className="mt-2 text-sm">
+          <p className="flex items-center gap-2 font-medium">
+            <span className="size-2.5 rounded-full" style={{ backgroundColor: selectedCategory.color }} />
+            {selectedCategory.name}
+          </p>
+          <p className="mt-0.5 text-xs leading-relaxed text-stone-600">
+            {daySummary(selectedKind, actualAt(selectedKey), plannedAt(selectedKey))}
+          </p>
+        </div>
+      )}
+
+      {/* Fills the rest of the panel (scrolls, starting just before now) */}
+      <div className="relative mt-2 min-h-0 flex-1">
+        <div className="absolute inset-0">
+          <WeekCalendar
+            key={selectedDay.date}
+            days={[{ ...selectedDay }]}
+            today={today}
+            mobileDates={[selectedDay.date]}
+            nowMinutes={selectedKind === "today" ? nowMinutes : null}
+            blocks={blocks}
+            canAddBlocks={canAddBlocks && selectedKind !== "past"}
+            groups={groups}
+            timeZone={timeZone}
+            fillHeight
+            defaultCategoryId={selected.categoryId ?? undefined}
+            hideAddButton
+          />
+        </div>
+      </div>
+      <p className="mt-2 text-xs text-stone-400">Plan on the left, done on the right.</p>
+    </>
+  );
 
   return (
     <div className="mt-6">
@@ -449,20 +558,23 @@ export default function WeekGrid({
         Type a weekly goal for each category, and the hours you plan for each day. Both save on their own.
       </p>
 
-      {/* One card: the grid, then the selected day's calendar attached right after the days
-          (below the grid on phones) */}
-      {/* (Nothing here clips or scrolls on tablets and up, so the headers can stick to the top of the
-          window. Phones keep sideways scrolling for the grid, so they don't get sticky headers.) */}
-      <div className="mt-3 overflow-hidden rounded-xl border border-stone-200 bg-white md:grid md:grid-cols-[auto_minmax(14rem,1fr)] md:overflow-visible">
-        <div className="overflow-x-auto md:overflow-visible">
-          <div className="relative px-4 pb-4">
+      {/* One card: the grid, with the selected day's calendar right after the selected day
+          (under the grid on phones). When it's beside the day, nothing here clips or scrolls,
+          so the headers and the calendar can stick to the top of the window. */}
+      <div
+        ref={cardRef}
+        className={`mt-3 rounded-xl border border-stone-200 bg-white ${inline ? "" : "overflow-hidden"}`}
+      >
+        <div className={inline ? "" : "overflow-x-auto"}>
+          {/* When the calendar is beside the day, leave room for its full height */}
+          <div className={`relative px-4 pb-4 ${inline ? "min-h-[min(calc(100vh-2rem),46rem)]" : ""}`}>
             {/* Full-height backgrounds behind each day's column: a soft highlight on hover (and on the
                 selected day), and clicking anywhere in the column, gaps included, shows that day */}
-            <div className={`${GRID} pointer-events-none absolute inset-y-0 left-4 right-4`}>
+            <div style={{ gridTemplateColumns: template }} className={`grid items-center gap-2 pointer-events-none absolute inset-y-0 left-4 right-4`}>
               <span />
               <span />
               <span />
-              {days.map((day) => (
+              {renderDays((day) => (
                 <button
                   key={day.date}
                   type="button"
@@ -470,7 +582,7 @@ export default function WeekGrid({
                   aria-hidden="true"
                   {...hoverProps(day.date)}
                   onClick={() => setSelected((current) => ({ ...current, date: day.date }))}
-                  className={`pointer-events-auto self-stretch rounded-lg transition-colors ${dayClass(day.date)} ${
+                  className={`pointer-events-auto self-stretch rounded-lg transition-colors ${
                     // (The tiles have borders, so they still show on top of this)
                     hoveredDate === day.date
                       ? "bg-stone-100"
@@ -479,18 +591,18 @@ export default function WeekGrid({
                         : ""
                   }`}
                 />
-              ))}
+              ), <span key="calendar" />)}
             </div>
 
             {/* The column headers stay at the top of the window while you scroll, on a darker band */}
-            <div className="sticky top-0 z-10 -mx-4 rounded-tl-xl border-b border-stone-200 bg-stone-100 px-4 pt-3">
+            <div className="sticky top-0 z-10 -mx-4 rounded-t-xl border-b border-stone-200 bg-stone-100 px-4 pt-3">
             {/* Headers. Clicking a day selects it without a category. */}
-            <div className={`${GRID} pb-2 text-sm text-stone-500`}>
+            <div style={{ gridTemplateColumns: template }} className={`grid items-center gap-2 pb-2 text-sm text-stone-500`}>
               <span />
               <span className="text-center font-medium text-accent">Goal ✎</span>
               <span className="pl-1">Week</span>
-              {days.map((day) => (
-                <span key={day.date} className={dayClass(day.date)}>
+              {renderDays((day) => (
+                <span key={day.date}>
                   <button
                     type="button"
                     {...hoverProps(day.date)}
@@ -502,6 +614,15 @@ export default function WeekGrid({
                     {day.weekday} {day.dayNumber}
                   </button>
                 </span>
+              ), (
+                // The calendar hangs down from the header, so it sticks to the top of the window with it
+                <div key="calendar" className="relative self-stretch">
+                  <div
+                    className={`absolute inset-x-0 top-0 flex flex-col rounded-lg border border-stone-200 bg-white p-2 text-stone-900 shadow-sm ${PANEL_HEIGHT}`}
+                  >
+                    {panel}
+                  </div>
+                </div>
               ))}
             </div>
             </div>
@@ -522,7 +643,7 @@ export default function WeekGrid({
                   return (
                     // Positioned so it sits above the column backgrounds; the row itself lets clicks through
                     // (to the column behind), while everything in it still takes them
-                    <div key={category.id} className={`${GRID} pointer-events-none relative py-2 *:pointer-events-auto`}>
+                    <div key={category.id} style={{ gridTemplateColumns: template }} className={`grid items-center gap-2 pointer-events-none relative py-2 *:pointer-events-auto`}>
                       <span className="flex items-center gap-2.5 px-1 text-base">
                         <span
                           className="size-3.5 shrink-0 rounded-full"
@@ -596,7 +717,7 @@ export default function WeekGrid({
                       </div>
 
                       {/* Days: type today's and later days' plans; past days show what happened */}
-                      {days.map((day) => {
+                      {renderDays((day) => {
                         const key = cellKey(category.id, day.date);
                         const kind = kindOf(day.date);
                         const isSelected = selected.date === day.date && selected.categoryId === category.id;
@@ -617,7 +738,7 @@ export default function WeekGrid({
                                 .reduce((sum, d) => sum + actualAt(cellKey(category.id, d.date)), 0)}
                               selected={isSelected}
                               hoverProps={hoverProps(day.date)}
-                              className={dayClass(day.date, "flex")}
+                              className=""
                               onSelect={select}
                             />
                           );
@@ -632,7 +753,7 @@ export default function WeekGrid({
                             onClick={(event) => event.currentTarget.querySelector("input")?.focus()}
                             className={`flex h-14 cursor-pointer flex-col items-center justify-center gap-1 rounded-md border border-stone-200 px-1 ${
                               kind === "today" ? "bg-accent-soft/60" : "bg-stone-100/70"
-                            } ${isSelected ? "ring-2 ring-accent" : ""} ${dayClass(day.date, "flex")}`}
+                            } ${isSelected ? "ring-2 ring-accent" : ""}`}
                           >
                             <HoursField
                               value={dayText[key] ?? ""}
@@ -652,7 +773,7 @@ export default function WeekGrid({
                             <DayNote kind={kind} scheduled={scheduledAt(key)} done={actualAt(key)} />
                           </div>
                         );
-                      })}
+                      }, <span key="calendar" />)}
 
                     </div>
                   );
@@ -661,11 +782,11 @@ export default function WeekGrid({
             ))}
 
             {/* Totals per day: done for past days and today, planned for later days */}
-            <div className={`${GRID} pointer-events-none relative border-t border-stone-200 pt-2 text-sm font-semibold *:pointer-events-auto`}>
+            <div style={{ gridTemplateColumns: template }} className={`grid items-center gap-2 pointer-events-none relative border-t border-stone-200 pt-2 text-sm font-semibold *:pointer-events-auto`}>
               <span className="px-1">Total</span>
               <span className="pr-5 text-right tabular-nums">{formatHours(goalTotal)}</span>
               <span />
-              {days.map((day) => {
+              {renderDays((day) => {
                 const future = kindOf(day.date) === "future";
                 const total = categories.reduce((sum, category) => {
                   const key = cellKey(category.id, day.date);
@@ -678,78 +799,20 @@ export default function WeekGrid({
                     key={day.date}
                     {...hoverProps(day.date)}
                     onClick={() => setSelected({ date: day.date, categoryId: null })}
-                    className={`rounded-md py-1 text-center tabular-nums ${dayClass(day.date)} ${future ? "font-normal text-stone-400" : ""}`}
+                    className={`rounded-md py-1 text-center tabular-nums ${future ? "font-normal text-stone-400" : ""}`}
                   >
                     {total > 0 ? formatHours(total) : "–"}
                   </button>
                 );
-              })}
+              }, <span key="calendar" />)}
             </div>
           </div>
         </div>
 
-        {/* The day calendar: the selected day, with every category, to plan around */}
-        {/* On wider screens it stays in view while you scroll and is about a screen tall,
-            instead of stretching down the whole grid */}
-        <aside className="flex flex-col border-t border-stone-200 p-3 md:sticky md:top-4 md:h-[calc(100vh-2rem)] md:max-h-[48rem] md:self-start md:border-l md:border-t-0">
-          <div className="flex items-center gap-1">
-            <ArrowButton
-              direction="previous"
-              onClick={selectedIndex > 0 ? () => stepDay(-1) : undefined}
-            />
-            <h2 className="flex-1 truncate text-center text-sm font-semibold">
-              {/* Short, so it fits beside the arrows and "+ Add"; the calendar below shows the date */}
-              {selectedKind === "today" ? "Today" : `${selectedDay.weekday} ${selectedDay.dayNumber}`}
-            </h2>
-            <ArrowButton
-              direction="next"
-              onClick={selectedIndex < days.length - 1 ? () => stepDay(1) : undefined}
-            />
-            {/* Small, in the top row. Later an "Add event" button can sit beside it. */}
-            {canAddBlocks && selectedKind !== "past" && (
-              <button
-                type="button"
-                onClick={addBlock}
-                className="ml-1 shrink-0 rounded-md border border-stone-200 px-2 py-1 text-xs font-medium text-accent transition-colors hover:bg-accent-soft"
-              >
-                + Add
-              </button>
-            )}
-          </div>
-
-          {selectedCategory && selectedKey && (
-            <div className="mt-2 text-sm">
-              <p className="flex items-center gap-2 font-medium">
-                <span className="size-2.5 rounded-full" style={{ backgroundColor: selectedCategory.color }} />
-                {selectedCategory.name}
-              </p>
-              <p className="mt-0.5 text-xs leading-relaxed text-stone-600">
-                {daySummary(selectedKind, actualAt(selectedKey), plannedAt(selectedKey))}
-              </p>
-            </div>
-          )}
-
-          {/* Fills the rest of the panel on wider screens (scrolls, starting just before now); fixed on phones */}
-          <div className="relative mt-2 h-[28rem] md:h-auto md:min-h-0 md:flex-1">
-            <div className="absolute inset-0">
-              <WeekCalendar
-                key={selectedDay.date}
-                days={[{ ...selectedDay }]}
-                today={today}
-                mobileDates={[selectedDay.date]}
-                nowMinutes={selectedKind === "today" ? nowMinutes : null}
-                blocks={blocks}
-                canAddBlocks={canAddBlocks && selectedKind !== "past"}
-                groups={groups}
-                timeZone={timeZone}
-                fillHeight
-                defaultCategoryId={selected.categoryId ?? undefined}
-                hideAddButton
-              />
-            </div>
-          </div>
-          <p className="mt-2 text-xs text-stone-400">Plan on the left, done on the right.</p>
-        </aside>
+        {/* Phones: the day's calendar goes under the grid */}
+        {!inline && (
+          <aside className="flex h-[34rem] flex-col border-t border-stone-200 p-3">{panel}</aside>
+        )}
       </div>
 
       {draft && (

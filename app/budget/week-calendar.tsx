@@ -67,7 +67,18 @@ type WeekCalendarProps = {
   defaultCategoryId?: string;
   // Leave out the "Add plan block" button below, when the page puts its own elsewhere
   hideAddButton?: boolean;
+  // Show a "Show All · Plan · Done" filter and a small "+ Add" above the calendar
+  // (in place of the button below), as the Plan page's Calendar view does
+  showFilter?: boolean;
 };
+
+// Which blocks the filter shows: both kinds side by side, or one kind at full width
+type Filter = "all" | "plan" | "done";
+const FILTERS: { key: Filter; label: string }[] = [
+  { key: "all", label: "All" },
+  { key: "plan", label: "Plan" },
+  { key: "done", label: "Done" },
+];
 
 // Place one day's blocks: cut them to the day, then put overlapping blocks side by side
 function layoutDay(blocks: CalendarBlock[], day: CalendarDay): PlacedBlock[] {
@@ -133,19 +144,23 @@ const TIME_LINE_MIN_HEIGHT = 26;
 
 type LaneProps = {
   blocks: PlacedBlock[];
-  side: "left" | "right";
+  // A half of the day, or all of it when the filter shows one kind
+  side: "left" | "right" | "full";
   // Formats a block's times, e.g. "9:00 – 10:30 AM"
   timeRange: (startMs: number, endMs: number) => string;
   // Called when a block with a draft is clicked; leave out to make blocks read-only
   onEdit?: (draft: BlockDraft) => void;
 };
 
-// One half of a day column: plan blocks (left) or tracked events (right)
+// One half of a day column (plan blocks left, tracked events right), or the whole day
 function Lane({ blocks, side, timeRange, onEdit }: LaneProps) {
+  const position = {
+    left: "left-0.5 right-1/2 pr-px",
+    right: "left-1/2 right-0.5 pl-px",
+    full: "left-0.5 right-0.5",
+  };
   return (
-    <div
-      className={`absolute inset-y-0 ${side === "left" ? "left-0.5 right-1/2 pr-px" : "left-1/2 right-0.5 pl-px"}`}
-    >
+    <div className={`absolute inset-y-0 ${position[side]}`}>
       {blocks.map((block) => {
         const width = 100 / block.columns;
         const isPlan = block.kind === "plan";
@@ -195,7 +210,9 @@ export default function WeekCalendar({
   headerHref,
   defaultCategoryId,
   hideAddButton,
+  showFilter,
 }: WeekCalendarProps) {
+  const [filter, setFilter] = useState<Filter>("all");
   const planBlocks = blocks.filter((block) => block.kind === "plan");
   const trackedBlocks = blocks.filter((block) => block.kind === "tracked");
   const hours = Array.from({ length: 24 }, (_, hour) => hour);
@@ -256,10 +273,46 @@ export default function WeekCalendar({
 
   return (
     <div className={fillHeight ? "flex h-full flex-col" : undefined}>
+      {/* Which blocks to show, and a small "+ Add" */}
+      {showFilter && (
+        <div className="mt-4 flex items-center justify-end gap-4 text-sm">
+          {/* A small segmented switch: clear enough to spot, light enough to stay out of the way */}
+          <div className="flex items-center gap-2">
+            <span className="text-xs text-stone-500">Show</span>
+            <div className="flex rounded-md border border-stone-200 bg-stone-100 p-0.5" role="group" aria-label="Show">
+              {FILTERS.map((option) => (
+                <button
+                  key={option.key}
+                  type="button"
+                  aria-pressed={filter === option.key}
+                  onClick={() => setFilter(option.key)}
+                  className={`rounded px-2.5 py-0.5 text-xs transition-colors ${
+                    filter === option.key
+                      ? "bg-white font-medium text-stone-900 shadow-sm"
+                      : "text-stone-500 hover:text-stone-800"
+                  }`}
+                >
+                  {option.label}
+                </button>
+              ))}
+            </div>
+          </div>
+          {canAddBlocks && (
+            <button
+              type="button"
+              onClick={openFromButton}
+              className="rounded-md border border-stone-200 px-2 py-1 text-xs font-medium text-accent transition-colors hover:bg-accent-soft"
+            >
+              + Add
+            </button>
+          )}
+        </div>
+      )}
+
       <div
         ref={scrollRef}
         className={`overflow-x-auto rounded-xl border border-stone-200 bg-white ${
-          fillHeight ? "min-h-0 flex-1 overflow-y-auto" : "mt-4"
+          fillHeight ? "min-h-0 flex-1 overflow-y-auto" : showFilter ? "mt-2" : "mt-4"
         } ${scrollHeight ? "overflow-y-auto" : ""}`}
         style={scrollHeight ? { maxHeight: scrollHeight } : undefined}
       >
@@ -313,13 +366,21 @@ export default function WeekCalendar({
                   />
                 ))}
 
-                <Lane
-                  blocks={layoutDay(planBlocks, day)}
-                  side="left"
-                  timeRange={timeRange}
-                  onEdit={canAddBlocks ? setDraft : undefined}
-                />
-                <Lane blocks={layoutDay(trackedBlocks, day)} side="right" timeRange={timeRange} />
+                {filter !== "done" && (
+                  <Lane
+                    blocks={layoutDay(planBlocks, day)}
+                    side={filter === "plan" ? "full" : "left"}
+                    timeRange={timeRange}
+                    onEdit={canAddBlocks ? setDraft : undefined}
+                  />
+                )}
+                {filter !== "plan" && (
+                  <Lane
+                    blocks={layoutDay(trackedBlocks, day)}
+                    side={filter === "done" ? "full" : "right"}
+                    timeRange={timeRange}
+                  />
+                )}
 
                 {day.date === today && nowMinutes !== null && (
                   <div
@@ -334,7 +395,7 @@ export default function WeekCalendar({
       </div>
 
       {/* Below the calendar, full width. Later an "Add event" button sits beside it. */}
-      {canAddBlocks && !hideAddButton && (
+      {canAddBlocks && !hideAddButton && !showFilter && (
         <div className="mt-3 flex justify-center gap-3">
           <button
             type="button"
