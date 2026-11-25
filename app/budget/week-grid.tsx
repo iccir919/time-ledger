@@ -284,6 +284,8 @@ export default function WeekGrid({
   const progress = goalProgress(goalRows);
   // Time past "at most" limits, added up: the week's time debt, shown below zero in the header
   const overTotal = overLimits(goalRows).reduce((sum, row) => sum + (row.done - row.goal), 0);
+  // "Done this week" leaves out time past limits: that shows on its own, as "Over limit"
+  const doneCounted = doneTotal - overTotal;
 
   // The selected day (shown in the panel) and the category clicked, if any.
   // Starts on today, or the first day when viewing another week.
@@ -399,7 +401,7 @@ export default function WeekGrid({
         <div className="flex gap-x-10">
           <div>
             <p className="text-sm text-stone-500">Done this week</p>
-            <p className="mt-1 text-3xl font-semibold tabular-nums text-accent">{formatHours(doneTotal)}</p>
+            <p className="mt-1 text-3xl font-semibold tabular-nums text-accent">{formatHours(doneCounted)}</p>
           </div>
           <div>
             <p className="text-sm text-stone-500">Planned ahead</p>
@@ -480,14 +482,8 @@ export default function WeekGrid({
               ))}
             </div>
 
-            {/* The "now" line and the column headers stay at the top of the window while you scroll */}
-            <div className="sticky top-0 z-10 rounded-tl-xl bg-white pt-4">
-            {/* The "now" line: past days show what happened, later days show what's planned */}
-            <NowBand dates={[selected.date]} today={today} className="grid lg:hidden" />
-            <NowBand dates={windows.lg} today={today} className="hidden lg:grid xl:hidden" />
-            <NowBand dates={windows.xl} today={today} className="hidden xl:grid 2xl:hidden" />
-            <NowBand dates={dates} today={today} className="hidden 2xl:grid" />
-
+            {/* The column headers stay at the top of the window while you scroll, on a darker band */}
+            <div className="sticky top-0 z-10 -mx-4 rounded-tl-xl border-b border-stone-200 bg-stone-100 px-4 pt-3">
             {/* Headers. Clicking a day selects it without a category. */}
             <div className={`${GRID} pb-2 text-sm text-stone-500`}>
               <span />
@@ -512,7 +508,7 @@ export default function WeekGrid({
 
             {groups.map((group) => (
               <div key={group.id} className="border-t border-stone-100 pt-2">
-                <p className="px-1 pt-1 text-sm font-semibold">{group.name}</p>
+                <p className="px-1 pt-1 font-semibold">{group.name}</p>
 
                 {group.categories.map((category) => {
                   const goal = goalOrNull(category.id);
@@ -527,9 +523,9 @@ export default function WeekGrid({
                     // Positioned so it sits above the column backgrounds; the row itself lets clicks through
                     // (to the column behind), while everything in it still takes them
                     <div key={category.id} className={`${GRID} pointer-events-none relative py-2 *:pointer-events-auto`}>
-                      <span className="flex items-center gap-2 px-1 text-sm">
+                      <span className="flex items-center gap-2.5 px-1 text-base">
                         <span
-                          className="size-2.5 shrink-0 rounded-full"
+                          className="size-3.5 shrink-0 rounded-full"
                           style={{ backgroundColor: category.color }}
                         />
                         <span className="truncate">{category.name}</span>
@@ -941,37 +937,6 @@ function PastCell({
       <span className={`whitespace-nowrap text-sm ${mainTone}`}>{main}</span>
       {note && <span className={`block max-w-full truncate text-[11px] leading-3.5 ${note.tone}`}>{note.text}</span>}
     </button>
-  );
-}
-
-// The row above the day headers: a solid line under past days ("what happened"),
-// "now" over today, and a dashed line under later days ("what's planned")
-function NowBand({ dates, today, className }: { dates: string[]; today: string; className: string }) {
-  const past = dates.filter((date) => date < today).length;
-  const hasToday = dates.includes(today);
-  const future = dates.filter((date) => date > today).length;
-  const span = (count: number) => ({ gridColumn: `span ${count} / span ${count}` });
-
-  return (
-    <div className={`${COLUMNS} pb-1 text-[11px] ${className}`}>
-      <span />
-      <span />
-      <span />
-      {past > 0 && (
-        <span style={span(past)} className="truncate border-b-2 border-accent/60 pb-0.5 text-center text-stone-500">
-          what happened
-        </span>
-      )}
-      {hasToday && <span className="pb-0.5 text-center font-semibold text-accent">now</span>}
-      {future > 0 && (
-        <span
-          style={span(future)}
-          className="truncate border-b-2 border-dashed border-stone-300 pb-0.5 text-center text-stone-400"
-        >
-          what&apos;s planned
-        </span>
-      )}
-    </div>
   );
 }
 
