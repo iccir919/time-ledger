@@ -40,7 +40,8 @@ export default async function Overview({ userId, timeZone, week }: OverviewProps
         .lt("start_at", week.end.toISOString())
         .gt("end_at", week.start.toISOString()),
       supabase.from("tracked_calendars").select("id", { count: "exact", head: true }),
-      loadTrends(timeZone),
+      // All of history, so the average week has as many full weeks as possible
+      loadTrends(timeZone, "all"),
     ]);
 
   if (goalsResult.error) {
@@ -120,10 +121,13 @@ export default async function Overview({ userId, timeZone, week }: OverviewProps
   const needsNextWeekGoals = isLateInWeek && (nextGoalsResult.count ?? 0) === 0;
 
   // Trends: this week so far next to the average full week (once there are 2)
-  const weekTotals = trends.weeks.map((_, index) =>
-    trends.rows.reduce((sum, row) => sum + row.hours[index], 0)
+  const weekTotals = (trends?.weeks ?? []).map((_, index) =>
+    trends!.categories.reduce((sum, category) => sum + category.weekHours[index], 0)
   );
-  const fullWeekTotals = weekTotals.slice(0, -1);
+  // Full weeks: all 7 days in the history, and not this week
+  const fullWeekTotals = weekTotals.filter(
+    (_, index) => trends!.weeks[index].dayCount === 7 && !trends!.weeks[index].isCurrent
+  );
   const averageWeek =
     fullWeekTotals.length >= 2
       ? fullWeekTotals.reduce((sum, h) => sum + h, 0) / fullWeekTotals.length
