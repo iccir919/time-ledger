@@ -8,6 +8,7 @@ import { syncRecentWeeks, type SyncResult } from "@/lib/sync-events";
 import { getMonthGrid, getWeekInRange, type Week } from "@/lib/week";
 import { PLAN_CALENDAR_NAME } from "@/lib/plan-calendar";
 import { loadPlanBlocks, nameKey } from "@/lib/plan-blocks";
+import { combinePlans } from "@/lib/plan-math";
 import { copyLastWeekGoals } from "./actions";
 import { createPlanCalendar } from "@/app/calendars/actions";
 import WeekGrid from "./week-grid";
@@ -250,34 +251,16 @@ async function Plan({ userId, timeZone, week, planStatus }: PlanProps) {
     typed[`${plan.category_id}:${plan.plan_date}`] = Number(plan.planned_hours);
   }
 
-  // A day's plan is whichever is bigger: the hours typed, or the hours scheduled as blocks.
-  // So scheduling hours you already typed doesn't count them twice.
-  // Planned ahead (for the goal statuses): later days count their whole plan; today counts what
-  // you typed minus what's already done, or the blocks still ahead if that's more; past days count none.
-  const planned: Record<string, number> = {};
-  const plannedAhead: Record<string, number> = {};
-  for (const category of categoryById.values()) {
-    for (const day of week.days) {
-      const key = `${category.id}:${day.date}`;
-      const typedHours = typed[key] ?? 0;
-      const scheduledHours = scheduled[key] ?? 0;
-      const plan = Math.max(typedHours, scheduledHours);
-      if (plan === 0) {
-        continue;
-      }
-      planned[key] = plan;
-
-      const ahead =
-        day.date > week.today
-          ? plan
-          : day.date === week.today
-            ? Math.max(typedHours - (actual[key] ?? 0), scheduledAhead[key] ?? 0)
-            : 0;
-      if (ahead > 0) {
-        plannedAhead[key] = ahead;
-      }
-    }
-  }
+  // Each day's plan (the bigger of typed and scheduled), and the part still ahead
+  const { planned, plannedAhead } = combinePlans({
+    categoryIds: [...categoryById.keys()],
+    days: week.days,
+    today: week.today,
+    typed,
+    scheduled,
+    scheduledAhead,
+    actual,
+  });
 
   const hasGoals = goalsResult.data.some((goal) => Number(goal.planned_hours) > 0);
   const showCopyLastWeek = !hasGoals && (previousGoalsResult.count ?? 0) > 0;

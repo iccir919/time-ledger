@@ -5,6 +5,7 @@ import GoalStatusLabel from "@/components/goal-status-label";
 import { loadCalendarData } from "@/lib/calendar-data";
 import { directionOf, goalProgress, goalStatus, overLimits } from "@/lib/goals";
 import { formatHours, hoursWithin } from "@/lib/hours";
+import { combinePlans, hoursByDay, sumByCategory } from "@/lib/plan-math";
 import { createClient } from "@/lib/supabase/server";
 import { loadTrends } from "@/lib/trends";
 import type { Week } from "@/lib/week";
@@ -22,7 +23,7 @@ const TODAY_CALENDAR_HEIGHT = 420;
 export default async function Overview({ userId, timeZone, week }: OverviewProps) {
   const supabase = await createClient();
 
-  const [calendar, goalsResult, nextGoalsResult, eventsResult, trackedResult, trends] =
+  const [calendar, goalsResult, nextGoalsResult, eventsResult, trackedResult, trends, dayPlansResult] =
     await Promise.all([
       // Today's calendar: plan blocks and tracked events, plus the categories
       loadCalendarData(userId, timeZone, week),
@@ -42,6 +43,12 @@ export default async function Overview({ userId, timeZone, week }: OverviewProps
       supabase.from("tracked_calendars").select("id", { count: "exact", head: true }),
       // All of history, so the average week has as many full weeks as possible
       loadTrends(timeZone, "all"),
+      // Hours typed into the Plan grid this week, so planned time matches the Plan page
+      supabase
+        .from("daily_plans")
+        .select("category_id, plan_date, planned_hours")
+        .gte("plan_date", week.days[0].date)
+        .lte("plan_date", week.days[week.days.length - 1].date),
     ]);
 
   if (goalsResult.error) {
@@ -49,6 +56,9 @@ export default async function Overview({ userId, timeZone, week }: OverviewProps
   }
   if (eventsResult.error) {
     throw new Error(eventsResult.error.message);
+  }
+  if (dayPlansResult.error) {
+    throw new Error(dayPlansResult.error.message);
   }
 
   const categories = calendar.groups.flatMap((group) => group.categories);
@@ -65,16 +75,38 @@ export default async function Overview({ userId, timeZone, week }: OverviewProps
   }
   const doneTotal = [...doneByCategory.values()].reduce((sum, h) => sum + h, 0);
 
-  // Plan time still ahead this week (after now), per category
-  const aheadByCategory = new Map<string, number>();
-  for (const block of calendar.blocks) {
-    const categoryId = block.draft?.categoryId;
-    if (block.kind === "plan" && categoryId) {
-      const ahead =
-        Math.max(0, Math.min(block.endMs, week.end.getTime()) - Math.max(block.startMs, now)) / 3_600_000;
-      aheadByCategory.set(categoryId, (aheadByCategory.get(categoryId) ?? 0) + ahead);
-    }
+  // Plan time still ahead this week, counted like the Plan page: each day's plan is the bigger
+  // of the hours typed in the grid and the Plan calendar's blocks
+  const actual = hoursByDay(
+    events.map((event) => ({ categoryId: event.category_id, startAt: event.start_at, endAt: event.end_at })),
+    week.days,
+    now
+  ).total;
+  const blocks = hoursByDay(
+    calendar.blocks
+      .filter((block) => block.kind === "plan")
+      .map((block) => ({
+        categoryId: block.categoryId,
+        startAt: new Date(block.startMs).toISOString(),
+        endAt: new Date(block.endMs).toISOString(),
+      })),
+    week.days,
+    now
+  );
+  const typed: Record<string, number> = {};
+  for (const plan of dayPlansResult.data) {
+    typed[`${plan.category_id}:${plan.plan_date}`] = Number(plan.planned_hours);
   }
+  const { plannedAhead } = combinePlans({
+    categoryIds: categories.map((category) => category.id),
+    days: week.days,
+    today: week.today,
+    typed,
+    scheduled: blocks.total,
+    scheduledAhead: blocks.ahead,
+    actual,
+  });
+  const aheadByCategory = sumByCategory(plannedAhead);
 
   // Goals for categories that have one (0 counts: it's a limit), in category order
   const goalByCategory = new Map(goalsResult.data.map((goal) => [goal.category_id, goal]));
@@ -90,7 +122,6 @@ export default async function Overview({ userId, timeZone, week }: OverviewProps
       done: doneByCategory.get(category.id) ?? 0,
       ahead: aheadByCategory.get(category.id) ?? 0,
     }));
-  const aheadTotal = [...aheadByCategory.values()].reduce((sum, h) => sum + h, 0);
 
   // Where this week went: categories with time, most first.
   // For a category past its limit, "over" is the part past it (striped in the bar).
@@ -110,15 +141,15 @@ export default async function Overview({ userId, timeZone, week }: OverviewProps
 
   // Today: just today's column of the calendar
   const todayDay = calendar.days.find((day) => day.date === week.today)!;
-  const overlapToday = (startMs: number, endMs: number, from = todayDay.startMs) =>
-    Math.max(0, Math.min(endMs, todayDay.endMs) - Math.max(startMs, from)) / 3_600_000;
+  const overlapToday = (startMs: number, endMs: number) =>
+    Math.max(0, Math.min(endMs, todayDay.endMs) - Math.max(startMs, todayDay.startMs)) / 3_600_000;
   const doneToday = calendar.blocks
     .filter((block) => block.kind === "tracked")
     .reduce((sum, block) => sum + overlapToday(block.startMs, block.endMs), 0);
-  // Planned time still ahead today: from now (or the block's start) to the block's end
-  const plannedLeft = calendar.blocks
-    .filter((block) => block.kind === "plan")
-    .reduce((sum, block) => sum + overlapToday(block.startMs, block.endMs, now), 0);
+  // Planned time still ahead today, counted the same way as the week's
+  const plannedLeft = Object.entries(plannedAhead)
+    .filter(([key]) => key.endsWith(`:${week.today}`))
+    .reduce((sum, [, hours]) => sum + hours, 0);
 
   // Needs attention
   const noTrackedCalendars = (trackedResult.count ?? 0) === 0;
@@ -159,47 +190,63 @@ export default async function Overview({ userId, timeZone, week }: OverviewProps
               See trends
             </Link>
           </div>
+          {/* Like the Plan page: done leaves out time past limits, which shows on its own */}
           <p className="mt-1 text-sm text-stone-500">
-            {formatHours(doneTotal)} done
+            {formatHours(doneTotal - overTotal)} done
             {overTotal > 0 && (
               <>
                 {" "}
                 · <span className="text-stone-400">{formatHours(overTotal)} over limits</span>
               </>
             )}
-            {aheadTotal > 0 && <> · {formatHours(aheadTotal)} planned ahead</>}
           </p>
-          <div className="mt-3 flex h-3 overflow-hidden rounded-full">
-            {spent.map((category) => (
-              <div
-                key={category.id}
-                title={`${category.name}: ${formatHours(category.hours)}${
-                  category.over > 0 ? `, ${formatHours(category.over)} over limit` : ""
-                }`}
-                className="flex"
-                style={{ width: `${(category.hours / doneTotal) * 100}%` }}
-              >
-                {/* Solid up to the limit, then the same stripes as the goal bars */}
-                <div style={{ flex: `${category.hours - category.over} 1 0`, backgroundColor: category.color }} />
-                {category.over > 0 && (
+          {/* Left of 0: time past limits, striped. Right of 0: the rest, solid, biggest first. */}
+          <div className="relative mt-3">
+            <div className="flex h-3 overflow-hidden rounded-full bg-stone-100">
+              {spent
+                .filter((category) => category.over > 0)
+                .map((category) => (
                   <div
+                    key={category.id}
+                    title={`${category.name}: ${formatHours(category.over)} over limit`}
                     style={{
-                      flex: `${category.over} 1 0`,
+                      width: `${(category.over / doneTotal) * 100}%`,
                       background: `repeating-linear-gradient(135deg, ${category.color} 0 3px, ${category.color}66 3px 6px)`,
                     }}
                   />
-                )}
-              </div>
-            ))}
+                ))}
+              {spent
+                .filter((category) => category.hours - category.over > 0)
+                .map((category) => (
+                  <div
+                    key={category.id}
+                    title={`${category.name}: ${formatHours(category.hours - category.over)}`}
+                    style={{
+                      width: `${((category.hours - category.over) / doneTotal) * 100}%`,
+                      backgroundColor: category.color,
+                    }}
+                  />
+                ))}
+            </div>
+            {/* The 0 mark, only needed when something went over */}
+            {overTotal > 0 && (
+              <span
+                className="absolute -top-1 h-5 border-l-2 border-stone-700"
+                style={{ left: `${(overTotal / doneTotal) * 100}%` }}
+              />
+            )}
           </div>
           <div className="mt-3 flex flex-wrap gap-x-5 gap-y-1 text-sm text-stone-600">
             {spent.slice(0, 3).map((category) => (
               <span key={category.id} className="flex items-center gap-2">
                 <span className="size-2.5 rounded-full" style={{ backgroundColor: category.color }} />
                 {category.name}
-                <span className="tabular-nums text-stone-400">
-                  {formatHours(category.hours)}
-                  {category.over > 0 && <> · {formatHours(category.over)} over</>}
+                <span className="text-xs tabular-nums text-stone-400">                  {/* "4.5h over" when all of it is past the limit, "3h · 1h over" when part is */}
+                  {category.over >= category.hours - 0.001
+                    ? `${formatHours(category.over)} over`
+                    : category.over > 0
+                      ? `${formatHours(category.hours)} · ${formatHours(category.over)} over`
+                      : formatHours(category.hours)}
                 </span>
               </span>
             ))}
