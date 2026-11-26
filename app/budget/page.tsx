@@ -1,6 +1,4 @@
 import Link from "next/link";
-import { TZDate } from "@date-fns/tz";
-import { format } from "date-fns";
 import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import AppHeader from "@/components/app-header";
@@ -13,8 +11,6 @@ import { loadPlanBlocks, nameKey } from "@/lib/plan-blocks";
 import { copyLastWeekGoals } from "./actions";
 import { createPlanCalendar } from "@/app/calendars/actions";
 import WeekGrid from "./week-grid";
-import type { CalendarBlock } from "./week-calendar";
-import { NO_CATEGORY_COLOR } from "@/lib/calendar-data";
 import type { GoalDirection } from "@/lib/goals";
 import CalendarView from "./calendar-view";
 import PlanTopBar from "./plan-top-bar";
@@ -127,7 +123,7 @@ async function Plan({ userId, timeZone, week, planStatus }: PlanProps) {
         .gt("planned_hours", 0),
       supabase
         .from("events")
-        .select("id, category_id, title, start_at, end_at, google_event_id, calendar:tracked_calendars(google_calendar_id)")
+        .select("category_id, start_at, end_at")
         .lt("start_at", week.end.toISOString())
         .gt("end_at", week.start.toISOString()),
       supabase.from("user_settings").select("plan_calendar_id, log_calendar_id").maybeSingle(),
@@ -187,39 +183,7 @@ async function Plan({ userId, timeZone, week, planStatus }: PlanProps) {
   const actual: Record<string, number> = {};
   let uncategorizedHours = 0;
 
-  // A time as the user sees it: the date ("2026-11-24") and the clock time ("19:00")
-  const localParts = (ms: number) => {
-    const local = new TZDate(ms, timeZone);
-    return { date: format(local, "yyyy-MM-dd"), time: format(local, "HH:mm") };
-  };
-
-  // Everything for the day panel's calendar: tracked events now, plan blocks below.
-  // Time logged in the app (in the Log calendar) gets a draft, so it can be edited and deleted.
   const logCalendarId = settingsResult.data?.log_calendar_id ?? null;
-  const calendarBlocks: CalendarBlock[] = eventsResult.data.map((event) => {
-    const startMs = Date.parse(event.start_at);
-    const endMs = Date.parse(event.end_at);
-    const isLogged = logCalendarId !== null && event.calendar?.google_calendar_id === logCalendarId;
-    return {
-      id: event.id,
-      kind: "tracked" as const,
-      title: event.title?.trim() || "(No title)",
-      color: (event.category_id && categoryById.get(event.category_id)?.color) || NO_CATEGORY_COLOR,
-      categoryId: event.category_id ?? null,
-      startMs,
-      endMs,
-      draft: isLogged
-        ? {
-            blockId: event.google_event_id,
-            kind: "done" as const,
-            categoryId: event.category_id ?? "",
-            date: localParts(startMs).date,
-            start: localParts(startMs).time,
-            end: localParts(endMs).time,
-          }
-        : undefined,
-    };
-  });
 
   for (const event of eventsResult.data) {
     for (const day of week.days) {
@@ -260,31 +224,6 @@ async function Plan({ userId, timeZone, week, planStatus }: PlanProps) {
 
     for (const block of blocks) {
       const categoryId = categoryIdByName.get(nameKey(block.title));
-      const startMs = Date.parse(block.startAt);
-      const endMs = Date.parse(block.endAt);
-      const start = localParts(startMs);
-      const end = localParts(endMs);
-
-      // Every block shows in the day panel; one that doesn't match a category is gray
-      calendarBlocks.push({
-        id: block.id,
-        kind: "plan",
-        title: block.title,
-        color: (categoryId && categoryById.get(categoryId)?.color) || NO_CATEGORY_COLOR,
-        categoryId: categoryId ?? null,
-        startMs,
-        endMs,
-        // What the edit popup starts with
-        draft: {
-          blockId: block.id,
-          kind: "plan",
-          categoryId: categoryId ?? "",
-          date: start.date,
-          start: start.time,
-          end: end.time,
-        },
-      });
-
       if (!categoryId) {
         unmatchedTitles.add(block.title);
         continue;
@@ -450,7 +389,6 @@ async function Plan({ userId, timeZone, week, planStatus }: PlanProps) {
         typed={typed}
         scheduled={scheduled}
         scheduledAhead={scheduledAhead}
-        blocks={calendarBlocks}
         canAddBlocks={Boolean(planCalendarId) && !planMissing}
         canLog={Boolean(logCalendarId)}
         timeZone={timeZone}

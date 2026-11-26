@@ -1,71 +1,31 @@
 "use client";
 
-import { useCallback, useLayoutEffect, useRef, useState, type ReactNode } from "react";
+import { useCallback, useState } from "react";
+import Link from "next/link";
 import GoalStatusLabel from "@/components/goal-status-label";
 import GoalBar from "@/components/goal-bar";
 import { directionOf, goalProgress, goalStatus, overLimits, type GoalDirection } from "@/lib/goals";
 import { formatHours } from "@/lib/hours";
 import { saveDayPlan, saveGoal } from "./actions";
+import CalendarSidebar from "./calendar-sidebar";
 import PlanBlockDialog, { type BlockDraft } from "./plan-block-dialog";
-import WeekCalendar, { draftAt, type CalendarBlock } from "./week-calendar";
+import { useHiddenCategories } from "./use-hidden-categories";
+import { draftAt } from "./week-calendar";
 
-// Columns: name, goal, week, then the days, with the selected day's calendar right after the
-// selected day. How many days fit is worked out from the card's width, always centered on the
-// selected day, so days around it drop off as the screen narrows. On narrow screens (phones) the
-// calendar goes under the grid and one day shows.
-const REM = 16;
-const GAP = 8;
-const NAME = 9 * REM;
-const GOAL = 8 * REM;
-const WEEK = 9 * REM;
-const DAY = 6 * REM;
-const CALENDAR_MIN = 16 * REM;
-const PADDING = 2 * REM;
+// Plan → Grid: the week as a budget sheet. A goal per category, the week's progress, and the
+// hours planned per day. Wide cards show all 7 days as columns. Narrower ones (phones) show
+// one day at a time, picked from a strip of the week's days. Which layout shows is decided by
+// the card's own width (a container query), so there's nothing to measure.
 
-// How the grid is laid out at a given card width
-function layoutFor(width: number | null) {
-  const fixed = PADDING + NAME + GOAL + WEEK + CALENDAR_MIN + 4 * GAP;
-  if (width === null || width < fixed + DAY + GAP) {
-    return { inline: false, dayCount: 1 };
-  }
-  const dayCount = Math.min(Math.max(Math.floor((width - fixed) / (DAY + GAP)), 1), 7);
-  return { inline: true, dayCount };
-}
-
-// The CSS grid columns for a row: fixed columns, the days before the selected one, the selected
-// day, its calendar (when inline), then the days after it
-function columnsFor(before: number, after: number, inline: boolean) {
-  const day = "6rem";
-  if (!inline) {
-    return "minmax(5.5rem,9rem) 8rem minmax(7rem,9rem) minmax(5.5rem,6.5rem)";
-  }
-  return [
-    "minmax(6rem,9rem) 8rem minmax(7rem,9rem)",
-    ...Array.from({ length: before }, () => day),
-    day,
-    "minmax(16rem,1fr)",
-    ...Array.from({ length: after }, () => day),
-  ].join(" ");
-}
-
-// The days shown: a run of `count` days around the selected one, kept inside the week
-function dayWindow(dates: string[], selectedDate: string, count: number) {
-  const index = Math.max(dates.indexOf(selectedDate), 0);
-  const start = Math.min(Math.max(index - Math.floor(count / 2), 0), Math.max(dates.length - count, 0));
-  return dates.slice(start, start + count);
-}
-
-// How tall the calendar beside the selected day is (it stays in view while you scroll)
-const PANEL_HEIGHT = "h-[min(calc(100vh-2rem),46rem)]";
-
+// Name, goal, week, then the 7 days
+const COLUMNS = "minmax(7rem,10rem) 8rem minmax(8.5rem,11rem) repeat(7,minmax(4.5rem,1fr))";
 
 type GridDay = {
   date: string;
   weekday: string;
   dayNumber: string;
-  // e.g. "Fri, Nov 27", for the popup's day picker and the panel's title
+  // e.g. "Fri, Nov 27", for the popup's day picker
   label: string;
-  // Midnight to midnight, for the panel's calendar
   startMs: number;
   endMs: number;
 };
@@ -75,6 +35,8 @@ type GridGroup = {
   name: string;
   categories: { id: string; name: string; color: string }[];
 };
+
+type GridCategory = GridGroup["categories"][number];
 
 type DayKind = "past" | "today" | "future";
 
@@ -97,8 +59,6 @@ type WeekGridProps = {
   scheduled: Record<string, number>;
   // The part of the scheduled hours still after now (all of it on later days)
   scheduledAhead: Record<string, number>;
-  // The week's tracked events and plan blocks, for the day panel's calendar
-  blocks: CalendarBlock[];
   // Adding plan blocks needs a Plan calendar
   canAddBlocks: boolean;
   // Logging done time needs a Log calendar
@@ -133,70 +93,62 @@ function hoursOrNull(text: string | undefined) {
   return trimmed === "" ? null : Math.max(0, Number(trimmed) || 0);
 }
 
-// The selected category on the selected day, in words, for the top of the day panel
-function daySummary(kind: DayKind, done: number, planned: number) {
-  if (kind === "past") {
-    if (planned > 0) {
-      return done >= planned
-        ? `${formatHours(done)} done · all of the plan`
-        : `${formatHours(done)} done of ${formatHours(planned)} planned · ${formatHours(planned - done)} missed`;
-    }
-    return done > 0 ? `${formatHours(done)} done` : "Nothing tracked";
-  }
-  const parts = [planned > 0 ? `${formatHours(planned)} planned` : "Nothing planned yet"];
-  if (kind === "today" && done > 0) {
-    parts.push(`${formatHours(done)} done`);
-  }
-  return parts.join(" · ");
-}
+const STRIPES = (color: string) => `repeating-linear-gradient(135deg, ${color} 0 3px, ${color}66 3px 6px)`;
 
-// The header's bar for the whole week, with a 0 mark. To the right of 0: progress toward
-// min goals (solid = done, light = planned ahead). To the left of 0, below zero: time past
-// max limits (the week's time debt), striped in gray.
-// The total of the goals is labeled at the end; hovering shows the details in words.
+// The header's bar for the whole week, in category colors. Right of 0: progress toward
+// "at least" goals, all the done time first (solid), then all the planned time (faded).
+// Left of 0: time past "at most" limits, striped in each category's color.
+// The goals' total is labeled at the end; hovering shows the details in words.
 function WeekBar({
-  done,
-  ahead,
+  segments,
+  overs,
   total,
-  over,
   details,
 }: {
-  done: number;
-  ahead: number;
+  segments: { id: string; color: string; done: number; ahead: number }[];
+  overs: { id: string; color: string; hours: number }[];
   total: number;
-  over: number;
   details: string;
 }) {
-  const span = Math.max(over + total, 0.01);
+  const overTotal = overs.reduce((sum, over) => sum + over.hours, 0);
+  const span = Math.max(overTotal + total, 0.01);
   const percent = (hours: number) => `${(hours / span) * 100}%`;
-  const zero = percent(over);
+  const zero = percent(overTotal);
+  const hasDone = segments.some((segment) => segment.done > 0);
+  const hasAhead = segments.some((segment) => segment.ahead > 0);
 
   return (
-    <div title={details} aria-label={details} className="relative mt-3 mb-4 h-2 cursor-default rounded-full bg-stone-100">
-      {over > 0 && (
-        <span
-          className="absolute inset-y-0 left-0 rounded-l-full"
-          style={{
-            width: zero,
-            background: "repeating-linear-gradient(135deg, #a8a29e 0 3px, #e7e5e4 3px 6px)",
-          }}
-        />
-      )}
-      <span className="absolute inset-y-0 bg-[#2f6f68]" style={{ left: zero, width: percent(done) }} />
-      <span
-        className="absolute inset-y-0 bg-[#6f9d94]"
-        style={{ left: `calc(${zero} + ${percent(done)})`, width: percent(ahead) }}
-      />
+    <div title={details} aria-label={details} className="relative mt-3 mb-4 cursor-default">
+      <div className="flex h-2 overflow-hidden rounded-full bg-stone-100">
+        {overs.map((over) => (
+          <span key={over.id} className="h-full" style={{ width: percent(over.hours), background: STRIPES(over.color) }} />
+        ))}
+        {segments.map((segment) =>
+          segment.done > 0 ? (
+            <span key={segment.id} className="h-full" style={{ width: percent(segment.done), backgroundColor: segment.color }} />
+          ) : null
+        )}
+        {/* A thin gap where done time ends and planned time starts */}
+        {hasDone && hasAhead && <span className="h-full w-0.5 shrink-0 bg-white" />}
+        {segments.map((segment) =>
+          segment.ahead > 0 ? (
+            <span
+              key={segment.id}
+              className="h-full"
+              style={{ width: percent(segment.ahead), backgroundColor: `${segment.color}66` }}
+            />
+          ) : null
+        )}
+      </div>
       {/* The 0 mark, only needed when there's something below zero */}
-      {over > 0 && (
+      {overTotal > 0 && (
         <>
-          <span className="absolute -inset-y-1 border-l-2 border-stone-700" style={{ left: zero }} />
+          <span className="absolute -top-1 h-4 border-l-2 border-stone-700" style={{ left: zero }} />
           <span className="absolute top-3.5 -translate-x-1/2 text-[10px] leading-none text-stone-400" style={{ left: zero }}>
             0
           </span>
         </>
       )}
-      {/* The goals' total at the end of the bar */}
       {total > 0 && (
         <span className="absolute right-0 top-3.5 text-[10px] leading-none text-stone-400">{formatHours(total)}</span>
       )}
@@ -215,13 +167,19 @@ export default function WeekGrid({
   typed,
   scheduled,
   scheduledAhead,
-  blocks,
   canAddBlocks,
   canLog,
   timeZone,
   nowMinutes,
 }: WeekGridProps) {
   const categories = groups.flatMap((group) => group.categories);
+
+  // Unchecked in the sidebar: their rows are hidden (the week's totals still count them)
+  const { hidden, toggle } = useHiddenCategories();
+  const shownGroups = groups
+    .map((group) => ({ ...group, categories: group.categories.filter((category) => !hidden.has(category.id)) }))
+    .filter((group) => group.categories.length > 0);
+  const shownCategories = shownGroups.flatMap((group) => group.categories);
 
   // Goals: each one's text, so a field can be empty while you type
   const [goalText, setGoalText] = useState<Record<string, string>>(() => asText(goals));
@@ -252,11 +210,6 @@ export default function WeekGrid({
     setLastDirections(directions);
     setDirectionById(directions);
   }
-  // A goal of 0 is always "at most"; an empty goal keeps whatever the switch says
-  const directionFor = (categoryId: string): GoalDirection => {
-    const goal = goalOrNull(categoryId);
-    return goal === null ? (directionById[categoryId] ?? "at_least") : directionOf(goal, directionById[categoryId]);
-  };
 
   const [lastTyped, setLastTyped] = useState(typed);
   if (typed !== lastTyped) {
@@ -273,10 +226,15 @@ export default function WeekGrid({
   // null when the field is empty (no goal); 0 is a real goal
   const goalOrNull = (categoryId: string) => hoursOrNull(goalText[categoryId]);
   const goalFor = (categoryId: string) => goalOrNull(categoryId) ?? 0;
+  // A goal of 0 is always "at most"; an empty goal keeps whatever the switch says
+  const directionFor = (categoryId: string): GoalDirection => {
+    const goal = goalOrNull(categoryId);
+    return goal === null ? (directionById[categoryId] ?? "at_least") : directionOf(goal, directionById[categoryId]);
+  };
+
   const read = (values: Record<string, number>) => (key: string) => values[key] ?? 0;
   const actualAt = read(actual);
   const scheduledAt = read(scheduled);
-
   const scheduledAheadAt = read(scheduledAhead);
   // What's typed in a day right now (0 when empty), so cells react as you type
   const typedAt = (key: string) => hoursOrNull(dayText[key]) ?? 0;
@@ -297,7 +255,25 @@ export default function WeekGrid({
   const weekTotal = (categoryId: string, at: (key: string, date: string) => number) =>
     days.reduce((sum, day) => sum + at(cellKey(categoryId, day.date), day.date), 0);
 
-  // The Total row adds up "at least" goals only; limits aren't something to fill
+  // Dates are "YYYY-MM-DD", so comparing them as text puts them in order
+  const kindOf = (date: string): DayKind => (date === today ? "today" : date > today ? "future" : "past");
+  // Only a week that isn't over yet can still get time planned
+  const weekStillOpen = days[days.length - 1].date >= today;
+
+  // Everything a row shows about its week
+  function rowFor(category: GridCategory) {
+    const goal = goalOrNull(category.id);
+    const done = weekTotal(category.id, actualAt);
+    const ahead = weekTotal(category.id, aheadAt);
+    const direction = directionFor(category.id);
+    const isLimit = direction === "at_most";
+    const weekly = goal === null ? null : goalStatus(goal, done, ahead, direction);
+    // A goal's hours not done and not planned yet ("2.5h unplanned")
+    const unplanned = goal !== null && !isLimit && weekStillOpen ? Math.max(0, goal - done - ahead) : 0;
+    return { goal, done, ahead, direction, isLimit, weekly, unplanned };
+  }
+
+  // The Total adds up "at least" goals only; limits aren't something to fill
   const goalTotal = categories.reduce(
     (sum, category) => sum + (directionFor(category.id) === "at_least" ? goalFor(category.id) : 0),
     0
@@ -309,6 +285,8 @@ export default function WeekGrid({
   const goalRows = categories
     .filter((category) => goalOrNull(category.id) !== null)
     .map((category) => ({
+      id: category.id,
+      color: category.color,
       name: category.name,
       goal: goalFor(category.id),
       done: weekTotal(category.id, actualAt),
@@ -316,80 +294,37 @@ export default function WeekGrid({
       direction: directionFor(category.id),
     }));
   const progress = goalProgress(goalRows);
-  // Time past "at most" limits, added up: the week's time debt, shown below zero in the header
-  const overTotal = overLimits(goalRows).reduce((sum, row) => sum + (row.done - row.goal), 0);
+  const overs = overLimits(goalRows).map((row) => ({ id: row.id, color: row.color, hours: row.done - row.goal }));
+  // Time past "at most" limits, added up: shown below zero in the header
+  const overTotal = overs.reduce((sum, over) => sum + over.hours, 0);
   // "Done this week" leaves out time past limits: that shows on its own, as "Over limit"
   const doneCounted = doneTotal - overTotal;
+  // The bar's pieces, counted the same way goalProgress counts them (nothing past a goal)
+  const segments = goalRows
+    .filter((row) => row.goal > 0 && directionOf(row.goal, row.direction) === "at_least")
+    .map((row) => {
+      const done = Math.min(row.done, row.goal);
+      return { id: row.id, color: row.color, done, ahead: Math.min(row.ahead, row.goal - done) };
+    });
 
-  // The selected day (shown in the panel) and the category clicked, if any.
-  // Starts on today, or the first day when viewing another week.
-  const [selected, setSelected] = useState<{ date: string; categoryId: string | null }>(() => ({
-    date: days.some((day) => day.date === today) ? today : days[0].date,
-    categoryId: null,
-  }));
+  // Phones: the day the rows show. Starts on today, or the first day of another week.
+  const [phoneDate, setPhoneDate] = useState(() =>
+    days.some((day) => day.date === today) ? today : days[0].date
+  );
+  const phoneDay = days.find((day) => day.date === phoneDate) ?? days[0];
+  // Phones: the category whose goal editor is open
+  const [openGoalId, setOpenGoalId] = useState<string | null>(null);
 
-  // A block being added from the panel's "+ Add" button, or null when that popup is closed
+  // "+ Add" (in the sidebar): today at the next full hour, or 9 AM on the first day
   const [draft, setDraft] = useState<BlockDraft | null>(null);
   const closeDialog = useCallback(() => setDraft(null), []);
-
-  // "+ Add": a block on the selected day, at the next full hour today or 9 AM on other days,
-  // with the selected category (if any)
   function addBlock() {
-    const start = selected.date === today && nowMinutes !== null ? Math.ceil(nowMinutes / 60) * 60 : 9 * 60;
-    setDraft({ ...draftAt(selected.date, start), categoryId: selected.categoryId ?? undefined });
-  }
-
-  // The panel's ‹ › arrows: the day before or after, keeping the selected category
-  function stepDay(offset: number) {
-    const index = days.findIndex((day) => day.date === selected.date) + offset;
-    if (days[index]) {
-      setSelected((current) => ({ ...current, date: days[index].date }));
-    }
-  }
-
-  // The day column under the pointer: its background gets a soft highlight (see DayColumns)
-  const [hoveredDate, setHoveredDate] = useState<string | null>(null);
-  const hoverProps = (date: string) => ({
-    onMouseEnter: () => setHoveredDate(date),
-    onMouseLeave: () => setHoveredDate((current) => (current === date ? null : current)),
-  });
-
-  // Dates are "YYYY-MM-DD", so comparing them as text puts them in order
-  const kindOf = (date: string): DayKind => (date === today ? "today" : date > today ? "future" : "past");
-
-  // The card's width, measured, decides how many days fit beside the calendar
-  const cardRef = useRef<HTMLDivElement>(null);
-  const [cardWidth, setCardWidth] = useState<number | null>(null);
-  useLayoutEffect(() => {
-    const card = cardRef.current;
-    if (!card) {
-      return;
-    }
-    const observer = new ResizeObserver(([entry]) => setCardWidth(entry.contentRect.width));
-    observer.observe(card);
-    return () => observer.disconnect();
-  }, []);
-  const { inline, dayCount } = layoutFor(cardWidth);
-
-  const shownDates = dayWindow(
-    days.map((day) => day.date),
-    selected.date,
-    dayCount
-  );
-  const shownDays = days.filter((day) => shownDates.includes(day.date));
-  const beforeCount = shownDays.filter((day) => day.date < selected.date).length;
-  const template = columnsFor(beforeCount, shownDays.length - beforeCount - 1, inline);
-
-  // A row's day cells in order, with the calendar's cell right after the selected day (when inline)
-  function renderDays(render: (day: GridDay) => ReactNode, calendarCell: ReactNode) {
-    const cells: ReactNode[] = [];
-    for (const day of shownDays) {
-      cells.push(render(day));
-      if (inline && day.date === selected.date) {
-        cells.push(calendarCell);
-      }
-    }
-    return cells;
+    const inWeek = days.some((day) => day.date === today);
+    setDraft(
+      inWeek && nowMinutes !== null
+        ? draftAt(today, Math.ceil(nowMinutes / 60) * 60)
+        : draftAt(days[0].date, 9 * 60)
+    );
   }
 
   // Save one goal when its field loses focus (if it changed) or its direction is flipped
@@ -436,388 +371,344 @@ export default function WeekGrid({
     saveGoalField(categoryId, next);
   }
 
-  const selectedDay = days.find((day) => day.date === selected.date) ?? days[0];
-  const selectedIndex = days.indexOf(selectedDay);
-  const selectedKind = kindOf(selectedDay.date);
-  const selectedCategory = categories.find((c) => c.id === selected.categoryId) ?? null;
-  const selectedKey = selectedCategory ? cellKey(selectedCategory.id, selectedDay.date) : null;
+  // The goal / limit switch joined to the hours field
+  function goalEditor(category: GridCategory) {
+    const goal = goalOrNull(category.id);
+    const isLimit = directionFor(category.id) === "at_most";
+    return (
+      <div className="flex items-center">
+        {/* goal: at least (work toward it), or limit: at most. 0 is always a limit. */}
+        <button
+          type="button"
+          onClick={() => flipDirection(category.id)}
+          disabled={goal === 0}
+          title={isLimit ? "Limit: at most this many hours. Click to make it a goal." : "Goal: at least this many hours. Click to make it a limit."}
+          aria-label={`${category.name} is a ${isLimit ? "limit (at most)" : "goal (at least)"}. Switch.`}
+          className="-mr-px h-[30px] w-11 shrink-0 rounded-l-md border border-accent/40 bg-white text-xs font-medium text-stone-500 hover:brightness-95 disabled:cursor-default disabled:opacity-70"
+        >
+          {isLimit ? "limit" : "goal"}
+        </button>
+        <HoursField
+          value={goalText[category.id] ?? ""}
+          onChange={(value) => setGoalText((current) => ({ ...current, [category.id]: value }))}
+          onFocus={() => setEditingKey(category.id)}
+          onBlur={() => saveGoalField(category.id)}
+          max={168}
+          placeholder="Set"
+          label={`Weekly goal for ${category.name}, in hours`}
+          status={goalStatusById[category.id]}
+          tinted
+          attached
+        />
+      </div>
+    );
+  }
 
-  // The selected day's panel: its title and arrows, "+ Add", a summary for the selected category,
-  // and the day's calendar. Beside the selected day on wider screens, under the grid on phones.
-  const panel = (
-    <>
-      <div className="flex items-center gap-1">
-        <ArrowButton
-          direction="previous"
-          onClick={selectedIndex > 0 ? () => stepDay(-1) : undefined}
-        />
-        <h2 className="flex-1 truncate text-center text-sm font-semibold">
-          {/* Short, so it fits beside the arrows and "+ Add"; the calendar below shows the date */}
-          {selectedKind === "today" ? "Today" : `${selectedDay.weekday} ${selectedDay.dayNumber}`}
-        </h2>
-        <ArrowButton
-          direction="next"
-          onClick={selectedIndex < days.length - 1 ? () => stepDay(1) : undefined}
-        />
-        {/* Small, in the top row. The popup picks Plan or Done. */}
-        {/* Planning is for today and later; logging done time works on any day */}
-        {((canAddBlocks && selectedKind !== "past") || canLog) && (
-          <button
-            type="button"
-            onClick={addBlock}
-            className="ml-1 shrink-0 rounded-md border border-stone-200 px-2 py-1 text-xs font-medium text-accent transition-colors hover:bg-accent-soft"
-          >
-            + Add
-          </button>
+  // The week for one category: done of goal, the bar, then the status (and what's unplanned)
+  function weekSummary(category: GridCategory) {
+    const { goal, done, ahead, direction, isLimit, weekly, unplanned } = rowFor(category);
+    return (
+      <div className="flex min-h-14 flex-col justify-center text-sm leading-snug">
+        {goal === null ? (
+          <p className={done > 0 ? "text-stone-600" : "text-stone-300"}>
+            {done > 0 ? `${formatHours(done)} done` : "–"}
+          </p>
+        ) : (
+          <>
+            {/* "2 of 3h max", or "4.5 over 0h max" once a limit is passed */}
+            <p>
+              <span className="font-medium text-stone-900">{num(done)}</span>
+              <span className="text-stone-500">
+                {isLimit && done > goal ? " over " : " of "}
+                {formatHours(goal)}
+                {isLimit ? " max" : ""}
+              </span>
+            </p>
+            <GoalBar goal={goal} done={done} ahead={ahead} direction={direction} color={category.color} className="mt-1.5" />
+          </>
+        )}
+        {/* "Over limit" stays out: the line above already says it */}
+        {weekly && weekly.tone !== "over" && (
+          <p className="mt-1 text-xs">
+            <GoalStatusLabel status={weekly} />
+            {unplanned >= 0.01 && weekly.tone === "quiet" && (
+              <span className="text-stone-400"> · {formatHours(unplanned)} unplanned</span>
+            )}
+          </p>
         )}
       </div>
+    );
+  }
 
-      {selectedCategory && selectedKey && (
-        <div className="mt-2 text-sm">
-          <p className="flex items-center gap-2 font-medium">
-            <span className="size-2.5 rounded-full" style={{ backgroundColor: selectedCategory.color }} />
-            {selectedCategory.name}
-          </p>
-          <p className="mt-0.5 text-xs leading-relaxed text-stone-600">
-            {daySummary(selectedKind, actualAt(selectedKey), plannedAt(selectedKey))}
-          </p>
-        </div>
-      )}
+  // One category on one day: what happened (past), or a field to type the plan (today and later)
+  function dayCell(category: GridCategory, day: GridDay, goal: number | null, direction: GoalDirection) {
+    const key = cellKey(category.id, day.date);
+    const kind = kindOf(day.date);
 
-      {/* Fills the rest of the panel (scrolls, starting just before now) */}
-      <div className="relative mt-2 min-h-0 flex-1">
-        <div className="absolute inset-0">
-          <WeekCalendar
-            key={selectedDay.date}
-            days={[{ ...selectedDay }]}
-            today={today}
-            mobileDates={[selectedDay.date]}
-            nowMinutes={selectedKind === "today" ? nowMinutes : null}
-            blocks={blocks}
-            canAddBlocks={canAddBlocks && selectedKind !== "past"}
-            canLog={canLog}
-            groups={groups}
-            timeZone={timeZone}
-            fillHeight
-            defaultCategoryId={selected.categoryId ?? undefined}
-            hideAddButton
-          />
-        </div>
+    if (kind === "past") {
+      return (
+        <PastCell
+          key={day.date}
+          href={`/budget?week=${day.date}`}
+          label={`${category.name}, ${day.label}`}
+          done={actualAt(key)}
+          planned={plannedAt(key)}
+          goal={goal}
+          direction={direction}
+          doneBefore={days
+            .filter((d) => d.date < day.date)
+            .reduce((sum, d) => sum + actualAt(cellKey(category.id, d.date)), 0)}
+        />
+      );
+    }
+
+    return (
+      // A fixed size, so typing doesn't change it. Clicking anywhere on the tile types into it.
+      <div
+        key={day.date}
+        onClick={(event) => event.currentTarget.querySelector("input")?.focus()}
+        className={`flex h-14 cursor-pointer flex-col items-center justify-center gap-1 rounded-md border border-stone-200 px-1 ${
+          kind === "today" ? "bg-accent-soft/60" : "bg-stone-100/70"
+        }`}
+      >
+        <HoursField
+          value={dayText[key] ?? ""}
+          onChange={(value) => setDayText((current) => ({ ...current, [key]: value }))}
+          onFocus={() => setEditingKey(key)}
+          onBlur={() => saveDayField(category.id, day.date)}
+          max={24}
+          // A day with blocks but nothing typed shows the scheduled hours in gray
+          placeholder={scheduledAt(key) > 0 ? num(scheduledAt(key)) : "–"}
+          label={`${category.name}, ${day.label}: hours planned`}
+          status={dayStatus[key]}
+          compact
+        />
+        <DayNote kind={kind} scheduled={scheduledAt(key)} done={actualAt(key)} />
       </div>
-      <p className="mt-2 text-xs text-stone-400">Plan on the left, done on the right.</p>
-    </>
-  );
+    );
+  }
+
+  // A day's total: done for past days and today, planned for later days
+  function dayTotal(day: GridDay) {
+    const future = kindOf(day.date) === "future";
+    const total = shownCategories.reduce((sum, category) => {
+      const key = cellKey(category.id, day.date);
+      return sum + (future ? plannedAt(key) : actualAt(key));
+    }, 0);
+    return { future, total };
+  }
 
   return (
-    <div className="mt-6">
-      {/* Header: the week's two facts (done, planned ahead), and goal progress beside them */}
-      <div className="flex flex-wrap items-center gap-x-10 gap-y-4 rounded-xl border border-stone-200 bg-white p-5">
-        <div className="flex gap-x-10">
-          <div>
-            <p className="text-sm text-stone-500">Done this week</p>
-            <p className="mt-1 text-3xl font-semibold tabular-nums text-accent">{formatHours(doneCounted)}</p>
-          </div>
-          <div>
-            <p className="text-sm text-stone-500">Planned ahead</p>
-            {/* The same light teal as the planned part of the Goals bar */}
-            <p className="mt-1 text-3xl font-semibold tabular-nums text-[#6f9d94]">
-              {formatHours(aheadTotal)}
-            </p>
-          </div>
-          {/* Time past limits, as a negative number, kept quiet. Only shows when something went over. */}
-          {overTotal > 0 && (
+    <div className="mt-6 grid gap-6 lg:grid-cols-[11rem_minmax(0,1fr)]">
+      <CalendarSidebar
+        groups={groups}
+        hidden={hidden}
+        onToggle={toggle}
+        onAdd={canAddBlocks || canLog ? addBlock : undefined}
+        timeZone={timeZone}
+        today={today}
+        miniMonth={{ initialMonth: days[3].date.slice(0, 7), selected: days.map((day) => day.date) }}
+        showLegend={false}
+      />
+
+      <div className="@container min-w-0">
+        {/* Header: the week's facts, and goal progress beside them */}
+        <div className="flex flex-wrap items-center gap-x-10 gap-y-4 rounded-xl border border-stone-200 bg-white p-4 sm:p-5">
+          <div className="flex gap-x-6 sm:gap-x-10">
             <div>
-              <p className="text-sm text-stone-500">Over limit</p>
-              <p className="mt-1 text-3xl font-semibold tabular-nums text-stone-400">−{formatHours(overTotal)}</p>
+              <p className="flex items-center gap-1.5 text-xs text-stone-500 sm:text-sm">
+                <span className="h-2 w-3 rounded-sm bg-stone-500" />
+                Done this week
+              </p>
+              <p className="mt-1 text-xl font-semibold tabular-nums sm:text-3xl">{formatHours(doneCounted)}</p>
             </div>
+            <div>
+              <p className="flex items-center gap-1.5 text-xs text-stone-500 sm:text-sm">
+                <span className="h-2 w-3 rounded-sm bg-stone-500/40" />
+                Planned ahead
+              </p>
+              <p className="mt-1 text-xl font-semibold tabular-nums sm:text-3xl">{formatHours(aheadTotal)}</p>
+            </div>
+            {/* Time past limits, as a negative number, kept quiet. Only shows when something went over. */}
+            {overTotal > 0 && (
+              <div>
+                <p className="text-xs text-stone-500 sm:text-sm">Over limit</p>
+                <p className="mt-1 text-xl font-semibold tabular-nums text-stone-400 sm:text-3xl">
+                  −{formatHours(overTotal)}
+                </p>
+              </div>
+            )}
+          </div>
+
+          {progress || overTotal > 0 ? (
+            <div className="min-w-64 flex-1 md:border-l md:border-stone-100 md:pl-10">
+              <p className="text-sm text-stone-500">Goals</p>
+              <WeekBar
+                segments={segments}
+                overs={overs}
+                total={progress?.total ?? 0}
+                details={[
+                  ...segments.map((s) => {
+                    const row = goalRows.find((r) => r.id === s.id)!;
+                    return `${row.name} ${num(row.done)} done, ${num(row.ahead)} planned of ${formatHours(row.goal)}`;
+                  }),
+                  ...overs.map((o) => `${goalRows.find((r) => r.id === o.id)!.name} ${formatHours(o.hours)} over limit`),
+                ].join(" · ")}
+              />
+            </div>
+          ) : (
+            <p className="min-w-64 flex-1 text-sm text-stone-500 md:border-l md:border-stone-100 md:pl-10">
+              Set a weekly goal below to see your progress here.
+            </p>
           )}
         </div>
 
-        {/* Goal progress, beside the numbers (under them on narrow screens) */}
-        {progress || overTotal > 0 ? (
-          <div className="min-w-64 flex-1 md:border-l md:border-stone-100 md:pl-10">
-            <p className="text-sm text-stone-500">Goals</p>
-            {/* The details are on hover, to keep the header quiet */}
-            <WeekBar
-              done={progress?.done ?? 0}
-              ahead={progress?.ahead ?? 0}
-              total={progress?.total ?? 0}
-              over={overTotal}
-              details={[
-                progress ? `${num(progress.done)} of ${formatHours(progress.total)} done` : null,
-                progress ? progress.status.text : null,
-                overTotal > 0 ? `${formatHours(overTotal)} over limit` : null,
-              ]
-                .filter(Boolean)
-                .join(" · ")}
-            />
-          </div>
-        ) : (
-          <p className="min-w-64 flex-1 text-sm text-stone-500 md:border-l md:border-stone-100 md:pl-10">
-            Set a weekly goal below to see your progress here.
+        {/* Wide: all 7 days as columns */}
+        <div className="hidden @min-[61rem]:block">
+          <p className="mt-6 text-sm text-stone-600">
+            Type a weekly goal for each category, and the hours you plan for each day. Both save on their own.
           </p>
-        )}
-      </div>
 
-      <p className="mt-6 text-sm text-stone-600">
-        Type a weekly goal for each category, and the hours you plan for each day. Both save on their own.
-      </p>
-
-      {/* One card: the grid, with the selected day's calendar right after the selected day
-          (under the grid on phones). When it's beside the day, nothing here clips or scrolls,
-          so the headers and the calendar can stick to the top of the window. */}
-      <div
-        ref={cardRef}
-        className={`mt-3 rounded-xl border border-stone-200 bg-white ${inline ? "" : "overflow-hidden"}`}
-      >
-        <div className={inline ? "" : "overflow-x-auto"}>
-          {/* When the calendar is beside the day, leave room for its full height */}
-          <div className={`relative px-4 pb-4 ${inline ? "min-h-[min(calc(100vh-2rem),46rem)]" : ""}`}>
-            {/* Full-height backgrounds behind each day's column: a soft highlight on hover (and on the
-                selected day), and clicking anywhere in the column, gaps included, shows that day */}
-            <div style={{ gridTemplateColumns: template }} className={`grid items-center gap-2 pointer-events-none absolute inset-y-0 left-4 right-4`}>
-              <span />
-              <span />
-              <span />
-              {renderDays((day) => (
-                <button
-                  key={day.date}
-                  type="button"
-                  tabIndex={-1}
-                  aria-hidden="true"
-                  {...hoverProps(day.date)}
-                  onClick={() => setSelected((current) => ({ ...current, date: day.date }))}
-                  className={`pointer-events-auto self-stretch rounded-lg transition-colors ${
-                    // (The tiles have borders, so they still show on top of this)
-                    hoveredDate === day.date
-                      ? "bg-stone-100"
-                      : day.date === selected.date
-                        ? "bg-accent-soft/30"
-                        : ""
-                  }`}
-                />
-              ), <span key="calendar" />)}
-            </div>
-
-            {/* The column headers stay at the top of the window while you scroll, on a darker band */}
+          <div className="mt-3 rounded-xl border border-stone-200 bg-white px-4 pb-4">
+            {/* The column headers stay at the top of the window while you scroll */}
             <div className="sticky top-0 z-10 -mx-4 rounded-t-xl border-b border-stone-200 bg-stone-100 px-4 pt-3">
-            {/* Headers. Clicking a day selects it without a category. */}
-            <div style={{ gridTemplateColumns: template }} className={`grid items-center gap-2 pb-2 text-sm text-stone-500`}>
-              <span />
-              <span className="text-center font-medium text-accent">Goal ✎</span>
-              <span className="pl-1">Week</span>
-              {renderDays((day) => (
-                <span key={day.date}>
-                  <button
-                    type="button"
-                    {...hoverProps(day.date)}
-                    onClick={() => setSelected({ date: day.date, categoryId: null })}
-                    className={`w-full rounded-md py-1.5 text-center text-base font-medium ${
-                      day.date === today ? "bg-accent-soft font-semibold text-accent" : "text-stone-600"
-                    } ${day.date === selected.date ? "ring-2 ring-accent/40" : ""}`}
+              <div style={{ gridTemplateColumns: COLUMNS }} className="grid items-center gap-2 pb-2 text-sm text-stone-500">
+                <span />
+                <span className="text-center font-medium text-accent">Goal ✎</span>
+                <span className="pl-1">Week</span>
+                {days.map((day) => (
+                  // Opens this week in the calendar
+                  <Link
+                    key={day.date}
+                    href={`/budget?week=${day.date}`}
+                    title={`Open ${day.label} in the calendar`}
+                    className={`rounded-md py-1.5 text-center text-base font-medium transition-colors ${
+                      day.date === today ? "bg-accent-soft font-semibold text-accent" : "text-stone-600 hover:bg-stone-200/70"
+                    }`}
                   >
                     {day.weekday} {day.dayNumber}
-                  </button>
-                </span>
-              ), (
-                // The calendar hangs down from the header, so it sticks to the top of the window with it
-                <div key="calendar" className="relative self-stretch">
-                  <div
-                    className={`absolute inset-x-0 top-0 flex flex-col rounded-lg border border-stone-200 bg-white p-2 text-stone-900 shadow-sm ${PANEL_HEIGHT}`}
-                  >
-                    {panel}
-                  </div>
-                </div>
-              ))}
-            </div>
+                  </Link>
+                ))}
+              </div>
             </div>
 
-            {groups.map((group) => (
+            {shownGroups.map((group) => (
               <div key={group.id} className="border-t border-stone-100 pt-2">
                 <p className="px-1 pt-1 font-semibold">{group.name}</p>
-
                 {group.categories.map((category) => {
-                  const goal = goalOrNull(category.id);
-                  const done = weekTotal(category.id, actualAt);
-                  const ahead = weekTotal(category.id, aheadAt);
-                  const direction = directionFor(category.id);
-                  const isLimit = direction === "at_most";
-                  const weekly = goal === null ? null : goalStatus(goal, done, ahead, direction);
-                  const fieldStatus = goalStatusById[category.id];
-
+                  const { goal, direction } = rowFor(category);
                   return (
-                    // Positioned so it sits above the column backgrounds; the row itself lets clicks through
-                    // (to the column behind), while everything in it still takes them
-                    <div key={category.id} style={{ gridTemplateColumns: template }} className={`grid items-center gap-2 pointer-events-none relative py-2 *:pointer-events-auto`}>
+                    <div key={category.id} style={{ gridTemplateColumns: COLUMNS }} className="grid items-center gap-2 py-2">
                       <span className="flex items-center gap-2.5 px-1 text-base">
-                        <span
-                          className="size-3.5 shrink-0 rounded-full"
-                          style={{ backgroundColor: category.color }}
-                        />
+                        <span className="size-3.5 shrink-0 rounded-full" style={{ backgroundColor: category.color }} />
                         <span className="truncate">{category.name}</span>
                       </span>
-
-                      {/* The goal: tinted and outlined so it reads as something to type in */}
-                      <div className="flex items-center">
-                        {/* min: at least (work toward it), or max: at most (a limit). 0 is always a limit. */}
-                        <button
-                          type="button"
-                          onClick={() => flipDirection(category.id)}
-                          disabled={goal === 0}
-                          title={isLimit ? "Limit: at most this many hours. Click to make it a goal." : "Goal: at least this many hours. Click to make it a limit."}
-                          aria-label={`${category.name} is a ${isLimit ? "limit (at most)" : "goal (at least)"}. Switch.`}
-                          className={`-mr-px h-[30px] w-11 shrink-0 rounded-l-md border text-xs font-medium ${
-                            "border-accent/40 bg-white text-stone-500"
-                          } hover:brightness-95 disabled:cursor-default disabled:opacity-70`}
-                        >
-                          {isLimit ? "limit" : "goal"}
-                        </button>
-                      <HoursField
-                        value={goalText[category.id] ?? ""}
-                        onChange={(value) => setGoalText((current) => ({ ...current, [category.id]: value }))}
-                        onFocus={() => setEditingKey(category.id)}
-                        onBlur={() => saveGoalField(category.id)}
-                        max={168}
-                        placeholder="Set"
-                        label={`Weekly goal for ${category.name}, in hours`}
-                        status={fieldStatus}
-                        tinted
-                        attached
-                      />
-                      </div>
-
-                      {/* Week: done of goal, the bar, then the status (gray text, colored dot) */}
-                      <div className="flex min-h-14 flex-col justify-center pl-1 text-sm leading-snug">
-                        {goal === null ? (
-                          <p className={done > 0 ? "text-stone-600" : "text-stone-300"}>
-                            {done > 0 ? `${formatHours(done)} done` : "–"}
-                          </p>
-                        ) : (
-                          <>
-                            {/* "2 of 3h max", or "4.5 over 0h max" once a limit is passed */}
-                            <p>
-                              <span className="font-medium text-stone-900">{num(done)}</span>
-                              <span className="text-stone-500">
-                                {isLimit && done > goal ? " over " : " of "}
-                                {formatHours(goal)}
-                                {isLimit ? " max" : ""}
-                              </span>
-                            </p>
-                            <GoalBar
-                              goal={goal}
-                              done={done}
-                              ahead={ahead}
-                              direction={direction}
-                              color={category.color}
-                              className="mt-1.5"
-                            />
-                          </>
-                        )}
-                        {/* "Over limit" stays out: the line above already says it */}
-                        {weekly && weekly.tone !== "over" && (
-                          <p className="mt-1 text-xs">
-                            <GoalStatusLabel status={weekly} />
-                          </p>
-                        )}
-                      </div>
-
-                      {/* Days: type today's and later days' plans; past days show what happened */}
-                      {renderDays((day) => {
-                        const key = cellKey(category.id, day.date);
-                        const kind = kindOf(day.date);
-                        const isSelected = selected.date === day.date && selected.categoryId === category.id;
-                        const select = () => setSelected({ date: day.date, categoryId: category.id });
-                        const dayPlan = plannedAt(key);
-
-                        if (kind === "past") {
-                          return (
-                            <PastCell
-                              key={day.date}
-                              label={`${category.name}, ${day.label}`}
-                              done={actualAt(key)}
-                              planned={dayPlan}
-                              goal={goal}
-                              direction={direction}
-                              doneBefore={days
-                                .filter((d) => d.date < day.date)
-                                .reduce((sum, d) => sum + actualAt(cellKey(category.id, d.date)), 0)}
-                              selected={isSelected}
-                              hoverProps={hoverProps(day.date)}
-                              className=""
-                              onSelect={select}
-                            />
-                          );
-                        }
-
-                        return (
-                          // A fixed size, so typing doesn't change it. Clicking anywhere on the tile
-                          // types into it (and shows that day in the calendar).
-                          <div
-                            key={day.date}
-                            {...hoverProps(day.date)}
-                            onClick={(event) => event.currentTarget.querySelector("input")?.focus()}
-                            className={`flex h-14 cursor-pointer flex-col items-center justify-center gap-1 rounded-md border border-stone-200 px-1 ${
-                              kind === "today" ? "bg-accent-soft/60" : "bg-stone-100/70"
-                            } ${isSelected ? "ring-2 ring-accent" : ""}`}
-                          >
-                            <HoursField
-                              value={dayText[key] ?? ""}
-                              onChange={(value) => setDayText((current) => ({ ...current, [key]: value }))}
-                              onFocus={() => {
-                                setEditingKey(key);
-                                select();
-                              }}
-                              onBlur={() => saveDayField(category.id, day.date)}
-                              max={24}
-                              // A day with blocks but nothing typed shows the scheduled hours in gray
-                              placeholder={scheduledAt(key) > 0 ? num(scheduledAt(key)) : "–"}
-                              label={`${category.name}, ${day.label}: hours planned`}
-                              status={dayStatus[key]}
-                              compact
-                            />
-                            <DayNote kind={kind} scheduled={scheduledAt(key)} done={actualAt(key)} />
-                          </div>
-                        );
-                      }, <span key="calendar" />)}
-
+                      {goalEditor(category)}
+                      <div className="pl-1">{weekSummary(category)}</div>
+                      {days.map((day) => dayCell(category, day, goal, direction))}
                     </div>
                   );
                 })}
               </div>
             ))}
 
-            {/* Totals per day: done for past days and today, planned for later days */}
-            <div style={{ gridTemplateColumns: template }} className={`grid items-center gap-2 pointer-events-none relative border-t border-stone-200 pt-2 text-sm font-semibold *:pointer-events-auto`}>
+            {/* Totals per day, for the rows showing */}
+            <div style={{ gridTemplateColumns: COLUMNS }} className="grid items-center gap-2 border-t border-stone-200 pt-2 text-sm font-semibold">
               <span className="px-1">Total</span>
               <span className="pr-5 text-right tabular-nums">{formatHours(goalTotal)}</span>
               <span />
-              {renderDays((day) => {
-                const future = kindOf(day.date) === "future";
-                const total = categories.reduce((sum, category) => {
-                  const key = cellKey(category.id, day.date);
-                  return sum + (future ? plannedAt(key) : actualAt(key));
-                }, 0);
-                // Clicking a total shows that day in the calendar, like its header
+              {days.map((day) => {
+                const { future, total } = dayTotal(day);
                 return (
-                  <button
-                    type="button"
-                    key={day.date}
-                    {...hoverProps(day.date)}
-                    onClick={() => setSelected({ date: day.date, categoryId: null })}
-                    className={`rounded-md py-1 text-center tabular-nums ${future ? "font-normal text-stone-400" : ""}`}
-                  >
+                  <span key={day.date} className={`py-1 text-center tabular-nums ${future ? "font-normal text-stone-400" : ""}`}>
                     {total > 0 ? formatHours(total) : "–"}
-                  </button>
+                  </span>
                 );
-              }, <span key="calendar" />)}
+              })}
             </div>
           </div>
         </div>
 
-        {/* Phones: the day's calendar goes under the grid */}
-        {!inline && (
-          <aside className="flex h-[34rem] flex-col border-t border-stone-200 p-3">{panel}</aside>
-        )}
+        {/* Narrow (phones): pick a day, then each row shows that day */}
+        <div className="@min-[61rem]:hidden">
+          <div className="mt-4 grid grid-cols-7 gap-1" role="tablist" aria-label="Choose a day">
+            {days.map((day) => {
+              const isSelected = day.date === phoneDate;
+              const isToday = day.date === today;
+              return (
+                <button
+                  key={day.date}
+                  type="button"
+                  role="tab"
+                  aria-selected={isSelected}
+                  onClick={() => setPhoneDate(day.date)}
+                  className={`rounded-lg border py-1.5 text-center ${
+                    isSelected ? "border-accent bg-accent-soft" : "border-transparent hover:bg-stone-100"
+                  }`}
+                >
+                  <span className="block text-[11px] text-stone-400">{day.weekday.slice(0, 1)}</span>
+                  <span className={`block text-sm font-medium tabular-nums ${isSelected || isToday ? "text-accent" : ""}`}>
+                    {day.dayNumber}
+                  </span>
+                  <span className={`mx-auto mt-0.5 block size-1 rounded-full ${isToday ? "bg-accent" : ""}`} />
+                </button>
+              );
+            })}
+          </div>
+          <p className="mt-2 text-xs text-stone-500">
+            {kindOf(phoneDay.date) === "past"
+              ? `${phoneDay.label}: done, and what was planned. Tap a row's day to open it in the calendar.`
+              : `${kindOf(phoneDay.date) === "today" ? "Today" : phoneDay.label}: type the hours you plan.`}
+          </p>
+
+          <div className="mt-2 rounded-xl border border-stone-200 bg-white px-4 pb-2">
+            {shownGroups.map((group) => (
+              <div key={group.id}>
+                <p className="pt-3 text-xs font-semibold text-stone-500">{group.name}</p>
+                {group.categories.map((category) => {
+                  const { goal, direction, isLimit } = rowFor(category);
+                  const open = openGoalId === category.id;
+                  return (
+                    <div
+                      key={category.id}
+                      className="grid grid-cols-[minmax(0,1fr)_4.5rem] items-center gap-3 border-b border-stone-100 py-2 last:border-b-0"
+                    >
+                      <div className="min-w-0">
+                        <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                          <span className="size-2.5 shrink-0 rounded-full" style={{ backgroundColor: category.color }} />
+                          <span>{category.name}</span>
+                          {/* The goal, as a small chip; tap to change it */}
+                          <button
+                            type="button"
+                            onClick={() => setOpenGoalId(open ? null : category.id)}
+                            aria-expanded={open}
+                            className={`rounded-full border px-2 py-px text-[11px] ${
+                              open ? "border-accent text-accent" : "border-stone-200 text-stone-500"
+                            }`}
+                          >
+                            {goal === null ? "Set goal" : `${formatHours(goal)} ${isLimit ? "limit" : "goal"}`}
+                          </button>
+                        </div>
+                        {open && <div className="mt-2 w-36">{goalEditor(category)}</div>}
+                        {goal !== null && <div className="-mt-1">{weekSummary(category)}</div>}
+                      </div>
+                      {dayCell(category, phoneDay, goal, direction)}
+                    </div>
+                  );
+                })}
+              </div>
+            ))}
+            {(() => {
+              const { future, total } = dayTotal(phoneDay);
+              return (
+                <p className="flex justify-between border-t border-stone-200 pt-2 text-sm font-semibold">
+                  <span>{future ? "Planned" : "Done"} this day</span>
+                  <span className="tabular-nums">{total > 0 ? formatHours(total) : "–"}</span>
+                </p>
+              );
+            })()}
+          </div>
+        </div>
       </div>
 
       {draft && (
@@ -826,7 +717,7 @@ export default function WeekGrid({
           days={days.map((day) => ({ date: day.date, label: day.label }))}
           groups={groups}
           timeZone={timeZone}
-          canPlan={canAddBlocks && selectedKind !== "past"}
+          canPlan={canAddBlocks}
           canLog={canLog}
           onClose={closeDialog}
         />
@@ -943,19 +834,17 @@ function DayNote({ kind, scheduled, done }: { kind: "today" | "future"; schedule
 
 // A past day for one category, in words: done, compared with the plan if there was one.
 // If this day took the week past its goal, it says so: "over limit" for an "at most"
-// goal, "extra" for an "at least" one.
+// goal, "extra" for an "at least" one. Clicking it opens that week in the calendar.
 function PastCell({
+  href,
   label,
   done,
   planned,
   goal,
   direction,
   doneBefore,
-  selected,
-  hoverProps,
-  className,
-  onSelect,
 }: {
+  href: string;
   label: string;
   done: number;
   planned: number;
@@ -963,10 +852,6 @@ function PastCell({
   goal: number | null;
   direction: GoalDirection;
   doneBefore: number;
-  selected: boolean;
-  hoverProps: { onMouseEnter: () => void; onMouseLeave: () => void };
-  className: string;
-  onSelect: () => void;
 }) {
   let main = done > 0 ? `${num(done)}h` : "–";
   let mainTone = done > 0 ? "text-stone-900" : "text-stone-300";
@@ -994,33 +879,13 @@ function PastCell({
   }
 
   return (
-    <button
-      type="button"
-      onClick={onSelect}
-      aria-label={`${label}: ${main}${note ? `, ${note.text}` : ""}. Show this day.`}
-      aria-pressed={selected}
-      {...hoverProps}
-      className={`flex h-14 flex-col items-center justify-center gap-1 rounded-md border border-stone-200 bg-stone-100/70 px-1 text-center tabular-nums leading-tight ${
-        selected ? "ring-2 ring-accent" : ""
-      } ${className}`}
+    <Link
+      href={href}
+      aria-label={`${label}: ${main}${note ? `, ${note.text}` : ""}. Open in the calendar.`}
+      className="flex h-14 flex-col items-center justify-center gap-1 rounded-md border border-stone-200 bg-stone-100/70 px-1 text-center tabular-nums leading-tight transition-colors hover:bg-stone-200/70"
     >
       <span className={`whitespace-nowrap text-sm ${mainTone}`}>{main}</span>
       {note && <span className={`block max-w-full truncate text-[11px] leading-3.5 ${note.tone}`}>{note.text}</span>}
-    </button>
-  );
-}
-
-// ‹ or ›, grayed out (and doing nothing) at the start or end of the week
-function ArrowButton({ direction, onClick }: { direction: "previous" | "next"; onClick?: () => void }) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      disabled={!onClick}
-      aria-label={direction === "previous" ? "Previous day" : "Next day"}
-      className="flex size-8 items-center justify-center rounded-md text-lg text-stone-500 hover:bg-stone-100 hover:text-stone-900 disabled:text-stone-200 disabled:hover:bg-transparent"
-    >
-      {direction === "previous" ? "‹" : "›"}
-    </button>
+    </Link>
   );
 }

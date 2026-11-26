@@ -3,7 +3,7 @@ import WeekCalendar from "@/app/budget/week-calendar";
 import GoalBar from "@/components/goal-bar";
 import GoalStatusLabel from "@/components/goal-status-label";
 import { loadCalendarData } from "@/lib/calendar-data";
-import { directionOf, goalProgress, goalStatus } from "@/lib/goals";
+import { directionOf, goalProgress, goalStatus, overLimits } from "@/lib/goals";
 import { formatHours, hoursWithin } from "@/lib/hours";
 import { createClient } from "@/lib/supabase/server";
 import { loadTrends } from "@/lib/trends";
@@ -65,12 +65,6 @@ export default async function Overview({ userId, timeZone, week }: OverviewProps
   }
   const doneTotal = [...doneByCategory.values()].reduce((sum, h) => sum + h, 0);
 
-  // Where this week went: categories with time, most first
-  const spent = categories
-    .map((category) => ({ ...category, hours: doneByCategory.get(category.id) ?? 0 }))
-    .filter((category) => category.hours > 0)
-    .sort((a, b) => b.hours - a.hours);
-
   // Plan time still ahead this week (after now), per category
   const aheadByCategory = new Map<string, number>();
   for (const block of calendar.blocks) {
@@ -97,6 +91,19 @@ export default async function Overview({ userId, timeZone, week }: OverviewProps
       ahead: aheadByCategory.get(category.id) ?? 0,
     }));
   const aheadTotal = [...aheadByCategory.values()].reduce((sum, h) => sum + h, 0);
+
+  // Where this week went: categories with time, most first.
+  // For a category past its limit, "over" is the part past it (striped in the bar).
+  const overByCategory = new Map(overLimits(goalRows).map((row) => [row.id, row.done - row.goal]));
+  const spent = categories
+    .map((category) => ({
+      ...category,
+      hours: doneByCategory.get(category.id) ?? 0,
+      over: overByCategory.get(category.id) ?? 0,
+    }))
+    .filter((category) => category.hours > 0)
+    .sort((a, b) => b.hours - a.hours);
+  const overTotal = spent.reduce((sum, category) => sum + category.over, 0);
   // All goals added up, for the goals card's header (shown only with 2 or more goals).
   // Each goal counts only up to itself.
   const progress = goalProgress(goalRows);
@@ -154,15 +161,35 @@ export default async function Overview({ userId, timeZone, week }: OverviewProps
           </div>
           <p className="mt-1 text-sm text-stone-500">
             {formatHours(doneTotal)} done
+            {overTotal > 0 && (
+              <>
+                {" "}
+                · <span className="text-stone-400">{formatHours(overTotal)} over limits</span>
+              </>
+            )}
             {aheadTotal > 0 && <> · {formatHours(aheadTotal)} planned ahead</>}
           </p>
           <div className="mt-3 flex h-3 overflow-hidden rounded-full">
             {spent.map((category) => (
               <div
                 key={category.id}
-                title={`${category.name}: ${formatHours(category.hours)}`}
-                style={{ width: `${(category.hours / doneTotal) * 100}%`, backgroundColor: category.color }}
-              />
+                title={`${category.name}: ${formatHours(category.hours)}${
+                  category.over > 0 ? `, ${formatHours(category.over)} over limit` : ""
+                }`}
+                className="flex"
+                style={{ width: `${(category.hours / doneTotal) * 100}%` }}
+              >
+                {/* Solid up to the limit, then the same stripes as the goal bars */}
+                <div style={{ flex: `${category.hours - category.over} 1 0`, backgroundColor: category.color }} />
+                {category.over > 0 && (
+                  <div
+                    style={{
+                      flex: `${category.over} 1 0`,
+                      background: `repeating-linear-gradient(135deg, ${category.color} 0 3px, ${category.color}66 3px 6px)`,
+                    }}
+                  />
+                )}
+              </div>
             ))}
           </div>
           <div className="mt-3 flex flex-wrap gap-x-5 gap-y-1 text-sm text-stone-600">
@@ -170,7 +197,10 @@ export default async function Overview({ userId, timeZone, week }: OverviewProps
               <span key={category.id} className="flex items-center gap-2">
                 <span className="size-2.5 rounded-full" style={{ backgroundColor: category.color }} />
                 {category.name}
-                <span className="tabular-nums text-stone-400">{formatHours(category.hours)}</span>
+                <span className="tabular-nums text-stone-400">
+                  {formatHours(category.hours)}
+                  {category.over > 0 && <> · {formatHours(category.over)} over</>}
+                </span>
               </span>
             ))}
             {spent.length > 3 && <span className="text-stone-400">and {spent.length - 3} more</span>}

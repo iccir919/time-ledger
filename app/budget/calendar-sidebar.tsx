@@ -19,6 +19,8 @@ type CalendarSidebarProps = {
   today: string;
   // The small month: which month it opens on, and the dates being shown (highlighted)
   miniMonth: { initialMonth: string; selected: string[] };
+  // The Plan (left) / Done (right) key, for the calendar. The grid leaves it out.
+  showLegend?: boolean;
 };
 
 // The Plan page's left column: "+ Add", a small month, the categories to show, and a legend.
@@ -31,6 +33,7 @@ export default function CalendarSidebar({
   timeZone,
   today,
   miniMonth,
+  showLegend = true,
 }: CalendarSidebarProps) {
   const hiddenCount = hidden.size;
 
@@ -102,7 +105,7 @@ export default function CalendarSidebar({
         <div className="mt-3 pb-2">{categoryList}</div>
       </details>
 
-      <div className="mt-6 hidden space-y-1.5 text-xs text-stone-500 lg:block">
+      <div className={`mt-6 hidden space-y-1.5 text-xs text-stone-500 ${showLegend ? "lg:block" : ""}`}>
         <p className="flex items-center gap-2">
           <span className="h-3 w-5 rounded border border-dashed border-stone-500 bg-stone-500/10" />
           Plan (left)
