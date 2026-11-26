@@ -60,6 +60,7 @@ export async function loadCalendarData(userId: string, timeZone: string, week: W
       kind: "tracked" as const,
       title: event.title ?? "(No title)",
       color: event.category?.color ?? NO_CATEGORY_COLOR,
+      categoryId: event.category_id ?? null,
       startMs,
       endMs,
       draft: isLogged
@@ -108,6 +109,7 @@ export async function loadCalendarData(userId: string, timeZone: string, week: W
       kind: "plan" as const,
       title: block.title,
       color: category?.color ?? NO_CATEGORY_COLOR,
+      categoryId: category?.id ?? null,
       startMs,
       endMs,
       // What the edit popup starts with. No category when the title doesn't match one.

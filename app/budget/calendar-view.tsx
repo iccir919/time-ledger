@@ -10,25 +10,13 @@ type CalendarViewProps = {
   week: Week;
 };
 
-// Plan → Calendar: the whole week, with plan blocks and tracked events side by side
+// Plan → Calendar: the whole week, with plan blocks and tracked events side by side,
+// and a sidebar to add time and choose which categories show
 export default async function CalendarView({ userId, timeZone, week }: CalendarViewProps) {
   const data = await loadCalendarData(userId, timeZone, week);
 
   return (
     <>
-      <div className="mt-6 flex flex-wrap items-center gap-5 text-xs text-stone-500">
-        <span className="flex items-center gap-2">
-          <span className="h-3 w-5 rounded border border-dashed border-stone-500 bg-stone-500/10" />
-          Plan (left)
-        </span>
-        <span className="flex items-center gap-2">
-          <span className="h-3 w-5 rounded bg-stone-500" />
-          Tracked (right)
-        </span>
-        <span>Times shown in {timeZone}</span>
-        {(data.hasPlanCalendar || data.hasLogCalendar) && <span>Click an empty spot to add time</span>}
-      </div>
-
       {data.planMissing && (
         <p className="mt-4 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
           Your Plan calendar was deleted in Google.{" "}
@@ -65,7 +53,7 @@ export default async function CalendarView({ userId, timeZone, week }: CalendarV
         canLog={data.hasLogCalendar}
         groups={data.groups}
         timeZone={timeZone}
-        showFilter
+        withSidebar
       />
     </>
   );

@@ -7,7 +7,6 @@ import AppHeader from "@/components/app-header";
 import ReconnectGoogle from "@/components/reconnect-google";
 import { formatHours, hoursWithin } from "@/lib/hours";
 import { syncRecentWeeks, type SyncResult } from "@/lib/sync-events";
-import WeekNav from "@/components/week-nav";
 import { getWeekInRange, type Week } from "@/lib/week";
 import { PLAN_CALENDAR_NAME } from "@/lib/plan-calendar";
 import { loadPlanBlocks, nameKey } from "@/lib/plan-blocks";
@@ -18,6 +17,7 @@ import type { CalendarBlock } from "./week-calendar";
 import { NO_CATEGORY_COLOR } from "@/lib/calendar-data";
 import type { GoalDirection } from "@/lib/goals";
 import CalendarView from "./calendar-view";
+import PlanTopBar from "./plan-top-bar";
 
 type BudgetPageProps = {
   searchParams: Promise<{
@@ -47,7 +47,8 @@ export default async function BudgetPage({ searchParams }: BudgetPageProps) {
 
   // The week being viewed, from the URL (?week=2026-11-23); defaults to this week
   const { week: weekParam, plan, view: viewParam } = await searchParams;
-  const view = viewParam === "calendar" ? "calendar" : "grid";
+  // Calendar is the default; the grid is ?view=grid
+  const view = viewParam === "grid" ? "grid" : "calendar";
   const week =
     sync?.status === "ok"
       ? getWeekInRange(sync.timeZone, weekParam, { weeksBack: 1, weeksAhead: Infinity })
@@ -57,7 +58,7 @@ export default async function BudgetPage({ searchParams }: BudgetPageProps) {
     <div className="min-h-screen">
       <AppHeader email={user.email} />
 
-      <main className={`mx-auto max-w-5xl px-6 py-12 ${view === "grid" ? "xl:max-w-7xl 2xl:max-w-[88rem]" : ""}`}>
+      <main className="mx-auto max-w-5xl px-6 py-12 xl:max-w-7xl 2xl:max-w-[88rem]">
         <h1 className="text-2xl font-semibold tracking-tight">Plan</h1>
 
         {sync === null && (
@@ -70,49 +71,7 @@ export default async function BudgetPage({ searchParams }: BudgetPageProps) {
 
         {sync?.status === "ok" && week && (
           <>
-            <div className="flex flex-wrap items-center justify-between gap-4">
-              <WeekNav
-                basePath="/budget"
-                week={week}
-                timeZone={sync.timeZone}
-                params={view === "calendar" ? { view: "calendar" } : undefined}
-              />
-
-              {/* Grid | Calendar switch: big, since it's one of the main controls */}
-              <nav
-                aria-label="Choose a view"
-                className="mt-4 grid w-full grid-cols-2 rounded-xl bg-stone-200/70 p-1 sm:w-auto"
-              >
-                <Link
-                  href={`/budget?week=${week.weekStart}`}
-                  aria-current={view === "grid" ? "page" : undefined}
-                  className={`flex items-center justify-center gap-2 rounded-lg px-6 py-2.5 text-base font-medium transition-colors ${
-                    view === "grid" ? "bg-white text-stone-900 shadow-sm" : "text-stone-500 hover:text-stone-900"
-                  }`}
-                >
-                  <svg aria-hidden="true" viewBox="0 0 20 20" className="size-4" fill="none" stroke="currentColor" strokeWidth="1.75">
-                    <rect x="3" y="3" width="6" height="6" rx="1" />
-                    <rect x="11" y="3" width="6" height="6" rx="1" />
-                    <rect x="3" y="11" width="6" height="6" rx="1" />
-                    <rect x="11" y="11" width="6" height="6" rx="1" />
-                  </svg>
-                  Grid
-                </Link>
-                <Link
-                  href={`/budget?week=${week.weekStart}&view=calendar`}
-                  aria-current={view === "calendar" ? "page" : undefined}
-                  className={`flex items-center justify-center gap-2 rounded-lg px-6 py-2.5 text-base font-medium transition-colors ${
-                    view === "calendar" ? "bg-white text-stone-900 shadow-sm" : "text-stone-500 hover:text-stone-900"
-                  }`}
-                >
-                  <svg aria-hidden="true" viewBox="0 0 20 20" className="size-4" fill="none" stroke="currentColor" strokeWidth="1.75">
-                    <rect x="3" y="4" width="14" height="13" rx="2" />
-                    <path d="M3 8h14M7 2.5v3M13 2.5v3" />
-                  </svg>
-                  Calendar
-                </Link>
-              </nav>
-            </div>
+            <PlanTopBar week={week} timeZone={sync.timeZone} view={view} />
 
             {view === "calendar" ? (
               <CalendarView userId={user.id} timeZone={sync.timeZone} week={week} />
@@ -238,6 +197,7 @@ async function Plan({ userId, timeZone, week, planStatus }: PlanProps) {
       kind: "tracked" as const,
       title: event.title?.trim() || "(No title)",
       color: (event.category_id && categoryById.get(event.category_id)?.color) || NO_CATEGORY_COLOR,
+      categoryId: event.category_id ?? null,
       startMs,
       endMs,
       draft: isLogged
@@ -303,6 +263,7 @@ async function Plan({ userId, timeZone, week, planStatus }: PlanProps) {
         kind: "plan",
         title: block.title,
         color: (categoryId && categoryById.get(categoryId)?.color) || NO_CATEGORY_COLOR,
+        categoryId: categoryId ?? null,
         startMs,
         endMs,
         // What the edit popup starts with
@@ -416,7 +377,7 @@ async function Plan({ userId, timeZone, week, planStatus }: PlanProps) {
             </p>
           </div>
           <form action={createPlanCalendar}>
-            <input type="hidden" name="return_to" value={`/budget?week=${week.weekStart}`} />
+            <input type="hidden" name="return_to" value={`/budget?view=grid&week=${week.weekStart}`} />
             <button className="rounded-lg bg-accent px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-accent-hover">
               {planMissing ? "Create a new Plan calendar" : "Create Plan calendar"}
             </button>
