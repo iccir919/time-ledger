@@ -1,15 +1,17 @@
 import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import AppHeader from "@/components/app-header";
-import CategorySelect, { type CategoryGroup } from "@/components/category-select";
 import ReconnectGoogle from "@/components/reconnect-google";
 import { formatHours, hoursBetween } from "@/lib/hours";
 import { syncRecentWeeks, type SyncResult } from "@/lib/sync-events";
 import { formatWeekRange, getWeek } from "@/lib/week";
-import { assignCategory } from "./actions";
+import InboxWeek, { type InboxCategoryGroup, type InboxRow } from "./inbox-week";
 
 // More than this many events to sort at once is unlikely; this keeps one page from getting huge
 const MAX_EVENTS = 1000;
+// How many categorized events to look through for suggestions, at most
+const MAX_HISTORY = 10_000;
+const PAGE_SIZE = 1000;
 
 export default async function InboxPage() {
   const supabase = await createClient();
@@ -73,7 +75,7 @@ async function InboxList({ timeZone }: { timeZone: string }) {
       .limit(MAX_EVENTS),
     supabase
       .from("category_groups")
-      .select("id, name, categories(id, name)")
+      .select("id, name, categories(id, name, color)")
       .order("sort_order")
       .order("sort_order", { referencedTable: "categories" }),
     // Whether there are any events at all, sorted or not
@@ -88,7 +90,7 @@ async function InboxList({ timeZone }: { timeZone: string }) {
   }
 
   const events: InboxEvent[] = eventsResult.data;
-  const categoryGroups = groupsResult.data;
+  const categoryGroups: InboxCategoryGroup[] = groupsResult.data;
 
   // No events at all: don't claim everything is sorted
   if (!allEventsResult.count) {
@@ -133,33 +135,73 @@ async function InboxList({ timeZone }: { timeZone: string }) {
     weeks[weeks.length - 1].events.push(event);
   }
 
+  // A suggestion for each title: the category last picked for it (if it still exists)
+  const categoryIds = new Set(categoryGroups.flatMap((group) => group.categories.map((c) => c.id)));
+  const titles = [...new Set(events.map((event) => event.title).filter((title): title is string => Boolean(title)))];
+  const lastPicked = await latestCategoryByTitle(titles);
+  const suggestionFor = (title: string | null) => {
+    const categoryId = title ? lastPicked.get(title) : undefined;
+    return categoryId && categoryIds.has(categoryId) ? categoryId : null;
+  };
+
   return (
     <div className="mt-10">
       <p className="text-sm text-stone-500">
         {events.length} {events.length === 1 ? "event" : "events"} to sort
       </p>
       {weeks.map((week) => (
-        <WeekSection
+        <InboxWeek
           key={week.weekStart}
           label={week.label}
-          events={week.events}
-          timeZone={timeZone}
-          categoryGroups={categoryGroups}
+          count={week.events.length}
+          rows={rowsFor(week.events, timeZone, suggestionFor)}
+          groups={categoryGroups}
         />
       ))}
     </div>
   );
 }
 
-type WeekSectionProps = {
-  label: string;
-  events: InboxEvent[];
-  timeZone: string;
-  categoryGroups: CategoryGroup[];
-};
+// The most recent category picked for each title, from events that already have one.
+// Newest first, so the first one seen per title wins; stops once every title has one.
+async function latestCategoryByTitle(titles: string[]) {
+  const latest = new Map<string, string>();
+  if (titles.length === 0) {
+    return latest;
+  }
 
-// One week's events to sort, grouped by title, biggest groups first
-function WeekSection({ label, events, timeZone, categoryGroups }: WeekSectionProps) {
+  const supabase = await createClient();
+  for (let from = 0; from < MAX_HISTORY; from += PAGE_SIZE) {
+    const { data, error } = await supabase
+      .from("events")
+      .select("title, category_id")
+      .in("title", titles)
+      .not("category_id", "is", null)
+      .order("start_at", { ascending: false })
+      .range(from, from + PAGE_SIZE - 1);
+
+    if (error) {
+      throw new Error(error.message);
+    }
+    for (const row of data) {
+      if (row.title && row.category_id && !latest.has(row.title)) {
+        latest.set(row.title, row.category_id);
+      }
+    }
+    if (data.length < PAGE_SIZE || latest.size === titles.length) {
+      break;
+    }
+  }
+  return latest;
+}
+
+// One week's events as Inbox rows: grouped by title, biggest groups first. A group lists
+// its events too, so one can be sorted differently.
+function rowsFor(
+  events: InboxEvent[],
+  timeZone: string,
+  suggestionFor: (title: string | null) => string | null
+): InboxRow[] {
   // Oldest first within the week reads more naturally
   const sorted = [...events].sort((a, b) => a.start_at.localeCompare(b.start_at));
 
@@ -169,16 +211,6 @@ function WeekSection({ label, events, timeZone, categoryGroups }: WeekSectionPro
     eventsByTitle.set(title, [...(eventsByTitle.get(title) ?? []), event]);
   }
 
-  const titleGroups = [...eventsByTitle.entries()]
-    .map(([title, items]) => ({
-      title,
-      items,
-      hours: items.reduce((sum, item) => sum + hoursBetween(item.start_at, item.end_at), 0),
-      calendars: [...new Set(items.map((item) => item.calendar?.name).filter(Boolean))].join(", "),
-    }))
-    // Biggest groups first
-    .sort((a, b) => b.items.length - a.items.length);
-
   const when = new Intl.DateTimeFormat("en-US", {
     timeZone,
     weekday: "short",
@@ -187,97 +219,32 @@ function WeekSection({ label, events, timeZone, categoryGroups }: WeekSectionPro
     hour: "numeric",
     minute: "2-digit",
   });
+  const hoursOf = (event: InboxEvent) => hoursBetween(event.start_at, event.end_at);
 
-  return (
-    <section className="mt-6">
-      <h2 className="flex items-baseline gap-2 text-sm font-semibold text-stone-700">
-        {label}
-        <span className="font-normal text-stone-400">
-          {events.length} {events.length === 1 ? "event" : "events"}
-        </span>
-      </h2>
+  return [...eventsByTitle.entries()]
+    .sort((a, b) => b[1].length - a[1].length)
+    .map(([title, items]) => {
+      const suggested = suggestionFor(items[0].title);
+      const hours = items.reduce((sum, item) => sum + hoursOf(item), 0);
+      const calendars = [...new Set(items.map((item) => item.calendar?.name).filter(Boolean))].join(", ");
+      const isSingle = items.length === 1;
+      const summary = isSingle ? when.format(new Date(items[0].start_at)) : `${items.length} events`;
 
-      <ul className="mt-2 divide-y divide-stone-100 rounded-xl border border-stone-200 bg-white">
-        {titleGroups.map((group) => {
-          const isSingle = group.items.length === 1;
-          const summary = isSingle
-            ? when.format(new Date(group.items[0].start_at))
-            : `${group.items.length} events`;
-
-          return (
-            <li key={group.title} className="px-5 py-4">
-              <div className="flex items-center gap-4">
-                <div className="min-w-0 flex-1">
-                  <p className="truncate font-medium">{group.title}</p>
-                  <p className="mt-0.5 text-sm text-stone-500">
-                    {summary} · {formatHours(group.hours)}
-                    {group.calendars && ` · ${group.calendars}`}
-                  </p>
-                </div>
-                <AssignForm
-                  eventIds={group.items.map((item) => item.id)}
-                  categoryGroups={categoryGroups}
-                  ariaLabel={
-                    isSingle
-                      ? `Category for ${group.title}`
-                      : `Category for all ${group.items.length} ${group.title} events`
-                  }
-                />
-              </div>
-
-              {!isSingle && (
-                <details className="mt-3">
-                  <summary className="cursor-pointer text-sm text-stone-500 hover:text-stone-800">
-                    Show each event
-                  </summary>
-                  <ul className="mt-3 space-y-2 border-l border-stone-200 pl-4">
-                    {group.items.map((item) => (
-                      <li key={item.id} className="flex items-center gap-4 text-sm">
-                        <span className="flex-1 text-stone-600">
-                          {when.format(new Date(item.start_at))} ·{" "}
-                          {formatHours(hoursBetween(item.start_at, item.end_at))}
-                        </span>
-                        <AssignForm
-                          eventIds={[item.id]}
-                          categoryGroups={categoryGroups}
-                          ariaLabel={`Category for ${group.title} on ${when.format(new Date(item.start_at))}`}
-                        />
-                      </li>
-                    ))}
-                  </ul>
-                </details>
-              )}
-            </li>
-          );
-        })}
-      </ul>
-    </section>
-  );
-}
-
-type AssignFormProps = {
-  eventIds: string[];
-  categoryGroups: CategoryGroup[];
-  ariaLabel: string;
-};
-
-// A category dropdown and Assign button for one or more events
-function AssignForm({ eventIds, categoryGroups, ariaLabel }: AssignFormProps) {
-  return (
-    <form action={assignCategory} className="flex shrink-0 items-center gap-2">
-      {eventIds.map((id) => (
-        <input key={id} type="hidden" name="event_id" value={id} />
-      ))}
-      <CategorySelect
-        name="category_id"
-        groups={categoryGroups}
-        placeholder="Choose a category"
-        required
-        ariaLabel={ariaLabel}
-      />
-      <button className="rounded-md bg-accent px-3 py-1 text-sm font-medium text-white transition-colors hover:bg-accent-hover">
-        Assign
-      </button>
-    </form>
-  );
+      return {
+        key: title,
+        title,
+        meta: [summary, formatHours(hours), calendars].filter(Boolean).join(" · "),
+        eventIds: items.map((item) => item.id),
+        suggestedCategoryId: suggested,
+        items: isSingle
+          ? undefined
+          : items.map((item) => ({
+              key: item.id,
+              title: `${title}, ${when.format(new Date(item.start_at))}`,
+              meta: `${when.format(new Date(item.start_at))} · ${formatHours(hoursOf(item))}`,
+              eventIds: [item.id],
+              suggestedCategoryId: suggested,
+            })),
+      };
+    });
 }

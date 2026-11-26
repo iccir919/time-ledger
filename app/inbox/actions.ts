@@ -3,27 +3,53 @@
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 
-// Assign one category to one or more events.
-// A title group sends all of its event IDs; a single event sends one.
-export async function assignCategory(formData: FormData) {
-  const eventIds = formData.getAll("event_id").map(String).filter(Boolean);
-  const categoryId = String(formData.get("category_id") ?? "");
+export type InboxResult = { error?: string };
 
-  if (eventIds.length === 0 || !categoryId) {
-    return;
+export type Assignment = { eventIds: string[]; categoryId: string };
+
+// The other pages that show uncategorized time. The Inbox itself isn't refreshed, so an
+// approved row stays put (with its Undo) until you leave the page.
+function revalidateOthers() {
+  revalidatePath("/dashboard");
+  revalidatePath("/budget");
+  revalidatePath("/trends");
+}
+
+// Approve one or more rows: each gives its events a category.
+// Only events still without one change, so approving twice is harmless.
+export async function approveCategories(assignments: Assignment[]): Promise<InboxResult> {
+  const supabase = await createClient();
+
+  for (const { eventIds, categoryId } of assignments) {
+    if (eventIds.length === 0 || !categoryId) {
+      continue;
+    }
+    const { error } = await supabase
+      .from("events")
+      .update({ category_id: categoryId })
+      .in("id", eventIds)
+      .is("category_id", null);
+    if (error) {
+      return { error: error.message };
+    }
+  }
+
+  revalidateOthers();
+  return {};
+}
+
+// Undo an approval: the events go back to having no category
+export async function undoCategories(eventIds: string[]): Promise<InboxResult> {
+  if (eventIds.length === 0) {
+    return {};
   }
 
   const supabase = await createClient();
-  const { error } = await supabase
-    .from("events")
-    .update({ category_id: categoryId })
-    .in("id", eventIds)
-    .is("category_id", null);
-
+  const { error } = await supabase.from("events").update({ category_id: null }).in("id", eventIds);
   if (error) {
-    throw new Error(error.message);
+    return { error: error.message };
   }
 
-  revalidatePath("/inbox");
-  revalidatePath("/dashboard");
+  revalidateOthers();
+  return {};
 }
