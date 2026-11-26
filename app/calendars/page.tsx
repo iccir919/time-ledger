@@ -1,22 +1,16 @@
+import Link from "next/link";
 import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import AppHeader from "@/components/app-header";
 import SignInButton from "@/components/sign-in-button";
-import { getGoogleAccessToken, listGoogleCalendars } from "@/lib/google";
-import { LOG_CALENDAR_NAME } from "@/lib/log-calendar";
+import { getGoogleAccessToken, listGoogleCalendars, type GoogleCalendar } from "@/lib/google";
+import { LOG_CALENDAR_NAME, looksLikeLogCalendar } from "@/lib/log-calendar";
 import { looksLikePlanCalendar, PLAN_CALENDAR_NAME } from "@/lib/plan-calendar";
-import {
-  createLogCalendar,
-  createPlanCalendar,
-  deleteLogCalendar,
-  deletePlanCalendar,
-  saveTrackedCalendars,
-  stopUsingLogCalendar,
-  stopUsingPlanCalendar,
-} from "./actions";
+import { createLogCalendar, createPlanCalendar, deleteLogCalendar, deletePlanCalendar } from "./actions";
+import CalendarList, { type CalendarRow } from "./calendar-list";
 
 type CalendarsPageProps = {
-  searchParams: Promise<{ saved?: string; plan?: string; log?: string }>;
+  searchParams: Promise<{ plan?: string; log?: string; confirm?: string }>;
 };
 
 export default async function CalendarsPage({ searchParams }: CalendarsPageProps) {
@@ -29,7 +23,7 @@ export default async function CalendarsPage({ searchParams }: CalendarsPageProps
     redirect("/");
   }
 
-  const { saved, plan, log } = await searchParams;
+  const { plan, log, confirm } = await searchParams;
   const accessToken = await getGoogleAccessToken(user.id);
 
   // No usable Google token: ask the user to reconnect
@@ -42,8 +36,8 @@ export default async function CalendarsPage({ searchParams }: CalendarsPageProps
           <section className="mt-10 rounded-xl border border-stone-200 bg-white p-8">
             <h2 className="font-semibold">Reconnect Google Calendar</h2>
             <p className="mt-2 text-sm leading-relaxed text-stone-600">
-              Time Ledger needs permission to read your calendars. Sign in with
-              Google again to reconnect.
+              Time Ledger needs permission to read your calendars. Sign in with Google again to
+              reconnect.
             </p>
             <div className="mt-6 max-w-xs">
               <SignInButton />
@@ -57,9 +51,7 @@ export default async function CalendarsPage({ searchParams }: CalendarsPageProps
   // Load Google calendars, saved choices, categories, and settings at the same time
   const [calendars, trackedResult, groupsResult, settingsResult] = await Promise.all([
     listGoogleCalendars(accessToken),
-    supabase
-      .from("tracked_calendars")
-      .select("google_calendar_id, name, default_category_id"),
+    supabase.from("tracked_calendars").select("google_calendar_id, name, default_category_id"),
     supabase
       .from("category_groups")
       .select("id, name, categories(id, name)")
@@ -78,26 +70,55 @@ export default async function CalendarsPage({ searchParams }: CalendarsPageProps
     throw new Error(settingsResult.error.message);
   }
 
-  // Tracked calendars that were deleted in Google. Saving the form stops tracking them.
-  const missingCalendars = trackedResult.data.filter(
-    (row) => !calendars.some((calendar) => calendar.id === row.google_calendar_id)
-  );
+  const tracked = new Map(trackedResult.data.map((row) => [row.google_calendar_id, row.default_category_id]));
+  const inGoogle = (id: string | null) => calendars.find((calendar) => calendar.id === id) ?? null;
+  const nameOf = (calendar: GoogleCalendar) => calendar.summaryOverride ?? calendar.summary;
 
-  // Look up saved choices by Google calendar ID
-  const tracked = new Map(
-    trackedResult.data.map((row) => [row.google_calendar_id, row.default_category_id])
-  );
-  const groups = groupsResult.data;
-
-  // The Plan calendar only counts if it's still in the user's Google account
+  // This app's calendars. Saved but gone from Google means it was deleted there.
   const savedPlanId = settingsResult.data?.plan_calendar_id ?? null;
-  const planCalendarId = calendars.some((calendar) => calendar.id === savedPlanId)
-    ? savedPlanId
-    : null;
-
-  // Same for the Log calendar
   const savedLogId = settingsResult.data?.log_calendar_id ?? null;
-  const logCalendarId = calendars.some((calendar) => calendar.id === savedLogId) ? savedLogId : null;
+  const planCalendar = inGoogle(savedPlanId);
+  const logCalendar = inGoogle(savedLogId);
+
+  // Calendars another copy of Time Ledger made (local vs production). They're hidden,
+  // unless this copy is somehow tracking one, so it can still be unchecked.
+  const isOtherCopy = (calendar: GoogleCalendar) =>
+    calendar.id !== savedPlanId &&
+    calendar.id !== savedLogId &&
+    (looksLikePlanCalendar(calendar.summary) || looksLikeLogCalendar(calendar.summary)) &&
+    !tracked.has(calendar.id);
+  const hidden = calendars.filter(isOtherCopy);
+
+  // Your calendars: everything else in Google, then tracked ones that were deleted there
+  const rows: CalendarRow[] = [
+    ...calendars
+      .filter((calendar) => calendar.id !== savedPlanId && calendar.id !== savedLogId && !isOtherCopy(calendar))
+      .map((calendar) => ({
+        id: calendar.id,
+        name: nameOf(calendar),
+        color: calendar.backgroundColor ?? "#a8a29e",
+        primary: Boolean(calendar.primary),
+        tracked: tracked.has(calendar.id),
+        defaultCategoryId: tracked.get(calendar.id) ?? null,
+        missing: false,
+      })),
+    ...trackedResult.data
+      .filter(
+        (row) =>
+          !inGoogle(row.google_calendar_id) &&
+          row.google_calendar_id !== savedPlanId &&
+          row.google_calendar_id !== savedLogId
+      )
+      .map((row) => ({
+        id: row.google_calendar_id,
+        name: row.name,
+        color: "#d6d3d1",
+        primary: false,
+        tracked: true,
+        defaultCategoryId: row.default_category_id,
+        missing: true,
+      })),
+  ];
 
   return (
     <div className="min-h-screen">
@@ -105,266 +126,167 @@ export default async function CalendarsPage({ searchParams }: CalendarsPageProps
 
       <main className="mx-auto max-w-2xl px-6 py-12">
         <h1 className="text-2xl font-semibold tracking-tight">Calendars</h1>
-        <p className="mt-2 text-stone-600">
-          Check the calendars that count toward your time budget. A default
-          category sorts that calendar&apos;s events automatically.
-        </p>
 
-        {missingCalendars.length > 0 && (
-          <p className="mt-6 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
-            {missingCalendars.length === 1 ? "This calendar was" : "These calendars were"} deleted
-            in Google but {missingCalendars.length === 1 ? "is" : "are"} still being tracked:{" "}
-            <span className="font-medium">{missingCalendars.map((row) => row.name).join(", ")}</span>.
-            Click Save to stop tracking {missingCalendars.length === 1 ? "it" : "them"}.
+        <section className="mt-8">
+          <h2 className="font-semibold">Your calendars</h2>
+          <p className="mt-1 text-sm leading-relaxed text-stone-600">
+            Check the ones that count toward your time. A default category sorts that calendar&apos;s
+            events automatically. Changes save as you go.
+          </p>
+          <CalendarList calendars={rows} groups={groupsResult.data} />
+        </section>
+
+        <section className="mt-12">
+          <h2 className="font-semibold">Time Ledger&apos;s calendars</h2>
+          <p className="mt-1 text-sm leading-relaxed text-stone-600">
+            Calendars this app makes in your Google account, so &ldquo;+ Add&rdquo; can put time there.
+            It can only change these, never your others.
+          </p>
+
+          <div className="mt-3 divide-y divide-stone-100 rounded-xl border border-stone-200 bg-white">
+            <AppCalendar
+              kind="plan"
+              label="Plan"
+              googleName={PLAN_CALENDAR_NAME}
+              calendar={planCalendar}
+              deletedInGoogle={Boolean(savedPlanId) && !planCalendar}
+              inUseText="Planned time goes here. It never counts as done time."
+              createAction={createPlanCalendar}
+              deleteAction={deletePlanCalendar}
+              deleteText="Removes the calendar and all its blocks from Google Calendar. Day plans typed into the grid stay. This can't be undone."
+              confirming={confirm === "plan"}
+              status={plan}
+            />
+            <AppCalendar
+              kind="log"
+              label="Log"
+              googleName={LOG_CALENDAR_NAME}
+              calendar={logCalendar}
+              deletedInGoogle={Boolean(savedLogId) && !logCalendar}
+              inUseText="Time you've done goes here, filed under its category and private. Always counted."
+              createAction={createLogCalendar}
+              deleteAction={deleteLogCalendar}
+              deleteText="Removes the calendar and everything logged in it from Google Calendar, and that time stops counting. This can't be undone."
+              confirming={confirm === "log"}
+              status={log}
+            />
+          </div>
+        </section>
+
+        {hidden.length > 0 && (
+          <p className="mt-8 text-xs text-stone-400">
+            Hidden: {hidden.map(nameOf).join(", ")}, made by another copy of Time Ledger.
           </p>
         )}
-
-        <form action={saveTrackedCalendars} className="mt-10">
-          <div className="divide-y divide-stone-100 rounded-xl border border-stone-200 bg-white">
-            {calendars.map((calendar) => {
-              const name = calendar.summaryOverride ?? calendar.summary;
-              const checkboxId = `calendar-${calendar.id}`;
-              const isPlanCalendar = calendar.id === planCalendarId;
-              // A Plan calendar made by another copy of Time Ledger (e.g. local vs production).
-              // Plan calendars hold plans, not time spent, so neither kind can be tracked.
-              const isOtherPlanCalendar = !isPlanCalendar && looksLikePlanCalendar(calendar.summary);
-              const cannotTrack = isPlanCalendar || isOtherPlanCalendar;
-              // The Log calendar holds done time logged in the app, so it's always tracked
-              const isLogCalendar = calendar.id === logCalendarId;
-
-              return (
-                <div key={calendar.id} className="flex items-center gap-4 px-5 py-3">
-                  <input
-                    type="checkbox"
-                    id={checkboxId}
-                    name="calendar_id"
-                    value={calendar.id}
-                    defaultChecked={(tracked.has(calendar.id) && !cannotTrack) || isLogCalendar}
-                    disabled={cannotTrack || isLogCalendar}
-                    className="size-4 accent-accent disabled:opacity-40"
-                  />
-                  <input type="hidden" name={`name:${calendar.id}`} value={name} />
-                  <label
-                    htmlFor={checkboxId}
-                    className="flex flex-1 items-center gap-3 text-sm"
-                  >
-                    <span
-                      className="size-3 shrink-0 rounded-full"
-                      style={{ backgroundColor: calendar.backgroundColor ?? "#a8a29e" }}
-                    />
-                    <span>
-                      {name}
-                      {calendar.primary && (
-                        <span className="ml-2 text-xs text-stone-400">primary</span>
-                      )}
-                      {isPlanCalendar && (
-                        <span className="ml-2 text-xs text-accent">this app&apos;s plan calendar</span>
-                      )}
-                      {isLogCalendar && (
-                        <span className="ml-2 text-xs text-accent">this app&apos;s log calendar, always tracked</span>
-                      )}
-                      {isOtherPlanCalendar && (
-                        <span className="ml-2 text-xs text-stone-400">
-                          from another copy of Time Ledger, not used here
-                        </span>
-                      )}
-                    </span>
-                  </label>
-                  <select
-                    disabled={cannotTrack || isLogCalendar}
-                    name={`default:${calendar.id}`}
-                    defaultValue={tracked.get(calendar.id) ?? ""}
-                    aria-label={`Default category for ${name}`}
-                    className="rounded-md border border-stone-200 bg-white px-2 py-1 text-sm text-stone-700 disabled:opacity-40"
-                  >
-                    <option value="">No default category</option>
-                    {groups.map((group) => (
-                      <optgroup key={group.id} label={group.name}>
-                        {group.categories.map((category) => (
-                          <option key={category.id} value={category.id}>
-                            {category.name}
-                          </option>
-                        ))}
-                      </optgroup>
-                    ))}
-                  </select>
-                </div>
-              );
-            })}
-          </div>
-
-          <div className="mt-6 flex items-center gap-4">
-            <button className="rounded-lg bg-accent px-4 py-2.5 text-sm font-medium text-white transition-colors hover:bg-accent-hover">
-              Save
-            </button>
-            {saved && <p className="text-sm text-accent">Saved.</p>}
-          </div>
-        </form>
-
-        {/* Plan calendar */}
-        <section className="mt-14">
-          <h2 className="font-semibold">Plan calendar</h2>
-
-          {planCalendarId ? (
-            <>
-              <p className="mt-2 text-sm leading-relaxed text-stone-600">
-                Your <span className="font-medium text-stone-900">{PLAN_CALENDAR_NAME}</span>{" "}
-                calendar is in Google Calendar. Blocks titled with a category name, like
-                &ldquo;Learning&rdquo;, show up on the Plan page as planned hours. You can also add
-                them from the Plan page&apos;s Calendar view. Its events never count as tracked time.
-              </p>
-
-              {/* Removing it: two choices, shown only when asked for */}
-              <details className="mt-4">
-                <summary className="cursor-pointer text-sm text-stone-500 hover:text-stone-800">
-                  Remove Plan calendar
-                </summary>
-                <div className="mt-3 space-y-4 rounded-xl border border-stone-200 bg-white p-5">
-                  <p className="text-sm text-stone-600">
-                    Plans already in your grid stay either way.
-                  </p>
-
-                  <form action={stopUsingPlanCalendar} className="flex items-center justify-between gap-4">
-                    <p className="text-sm text-stone-600">
-                      <span className="font-medium text-stone-900">Stop using it.</span> It stays
-                      in Google Calendar with its blocks.
-                    </p>
-                    <button className="shrink-0 rounded-md border border-stone-200 px-3 py-1.5 text-sm font-medium text-stone-700 transition-colors hover:bg-stone-50">
-                      Stop using
-                    </button>
-                  </form>
-
-                  <form action={deletePlanCalendar} className="flex items-center justify-between gap-4">
-                    <p className="text-sm text-stone-600">
-                      <span className="font-medium text-stone-900">Delete it.</span> Removes the
-                      calendar and all its blocks from Google Calendar. This can&apos;t be undone.
-                    </p>
-                    <button className="shrink-0 rounded-md border border-red-200 px-3 py-1.5 text-sm font-medium text-red-700 transition-colors hover:bg-red-50">
-                      Delete from Google
-                    </button>
-                  </form>
-                </div>
-              </details>
-            </>
-          ) : (
-            <>
-              <p className="mt-2 text-sm leading-relaxed text-stone-600">
-                Plan with exact times. Time Ledger will create a calendar called &ldquo;
-                {PLAN_CALENDAR_NAME}&rdquo; in your Google account. It can only change that
-                calendar, never your others.
-              </p>
-              <form action={createPlanCalendar} className="mt-4">
-                <input type="hidden" name="return_to" value="/calendars" />
-                <button className="rounded-lg bg-accent px-4 py-2.5 text-sm font-medium text-white transition-colors hover:bg-accent-hover">
-                  Create {PLAN_CALENDAR_NAME} calendar
-                </button>
-              </form>
-            </>
-          )}
-
-          {plan === "created" && planCalendarId && (
-            <p className="mt-4 text-sm text-accent">
-              Created. It may take a moment to appear in Google Calendar.
-            </p>
-          )}
-
-          {plan === "stopped" && (
-            <p className="mt-4 text-sm text-accent">
-              Time Ledger stopped using the Plan calendar. It&apos;s still in Google Calendar.
-            </p>
-          )}
-
-          {plan === "deleted" && (
-            <p className="mt-4 text-sm text-accent">
-              Deleted the Plan calendar from Google Calendar.
-            </p>
-          )}
-
-          {plan === "needs_permission" && (
-            <p className="mt-4 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
-              Time Ledger needs permission to manage its calendar. Sign out, sign back in, and
-              approve the new permission on Google&apos;s screen, then try again.
-            </p>
-          )}
-        </section>
-
-        {/* Log calendar */}
-        <section className="mt-14">
-          <h2 className="font-semibold">Log calendar</h2>
-
-          {logCalendarId ? (
-            <>
-              <p className="mt-2 text-sm leading-relaxed text-stone-600">
-                Your <span className="font-medium text-stone-900">{LOG_CALENDAR_NAME}</span> calendar
-                is in Google Calendar. Choose Done in the popup on the Plan page or dashboard to log
-                time there. It&apos;s always tracked, and what you log is filed under its category, so
-                it skips the Inbox. Events are private.
-              </p>
-
-              <details className="mt-4">
-                <summary className="cursor-pointer text-sm text-stone-500 hover:text-stone-800">
-                  Remove Log calendar
-                </summary>
-                <div className="mt-3 space-y-4 rounded-xl border border-stone-200 bg-white p-5">
-                  <form action={stopUsingLogCalendar} className="flex items-center justify-between gap-4">
-                    <p className="text-sm text-stone-600">
-                      <span className="font-medium text-stone-900">Stop logging to it.</span> It stays
-                      in Google Calendar, and its time still counts while it&apos;s checked above.
-                    </p>
-                    <button className="shrink-0 rounded-md border border-stone-200 px-3 py-1.5 text-sm font-medium text-stone-700 transition-colors hover:bg-stone-50">
-                      Stop logging
-                    </button>
-                  </form>
-
-                  <form action={deleteLogCalendar} className="flex items-center justify-between gap-4">
-                    <p className="text-sm text-stone-600">
-                      <span className="font-medium text-stone-900">Delete it.</span> Removes the
-                      calendar and everything logged in it from Google Calendar, and that time stops
-                      counting. This can&apos;t be undone.
-                    </p>
-                    <button className="shrink-0 rounded-md border border-red-200 px-3 py-1.5 text-sm font-medium text-red-700 transition-colors hover:bg-red-50">
-                      Delete from Google
-                    </button>
-                  </form>
-                </div>
-              </details>
-            </>
-          ) : (
-            <>
-              <p className="mt-2 text-sm leading-relaxed text-stone-600">
-                Log done time from inside Time Ledger. It will create a private calendar called
-                &ldquo;{LOG_CALENDAR_NAME}&rdquo; in your Google account and track it. It can only
-                change that calendar, never your others.
-              </p>
-              <form action={createLogCalendar} className="mt-4">
-                <button className="rounded-lg bg-accent px-4 py-2.5 text-sm font-medium text-white transition-colors hover:bg-accent-hover">
-                  Create {LOG_CALENDAR_NAME} calendar
-                </button>
-              </form>
-            </>
-          )}
-
-          {log === "created" && logCalendarId && (
-            <p className="mt-4 text-sm text-accent">
-              Created and tracked. It may take a moment to appear in Google Calendar.
-            </p>
-          )}
-          {log === "stopped" && (
-            <p className="mt-4 text-sm text-accent">
-              Time Ledger stopped logging to that calendar. It&apos;s still in Google Calendar.
-            </p>
-          )}
-          {log === "deleted" && (
-            <p className="mt-4 text-sm text-accent">Deleted the Log calendar from Google Calendar.</p>
-          )}
-          {log === "needs_permission" && (
-            <p className="mt-4 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
-              Time Ledger needs permission to manage its calendar. Sign out, sign back in, and
-              approve the new permission on Google&apos;s screen, then try again.
-            </p>
-          )}
-        </section>
       </main>
+    </div>
+  );
+}
+
+// Create and Delete share one size, so they line up from row to row
+const ROW_BUTTON =
+  "inline-flex w-16 shrink-0 items-center justify-center rounded-md border border-stone-200 py-1 text-xs font-medium text-stone-700 transition-colors";
+
+// One of the app's calendars: in use (with Delete), or not set up (with Create)
+function AppCalendar({
+  kind,
+  label,
+  googleName,
+  calendar,
+  deletedInGoogle,
+  inUseText,
+  createAction,
+  deleteAction,
+  deleteText,
+  confirming,
+  status,
+}: {
+  kind: "plan" | "log";
+  label: string;
+  googleName: string;
+  calendar: GoogleCalendar | null;
+  deletedInGoogle: boolean;
+  inUseText: string;
+  createAction: (formData: FormData) => Promise<void>;
+  deleteAction: () => Promise<void>;
+  deleteText: string;
+  confirming: boolean;
+  status: string | undefined;
+}) {
+  const inUse = calendar !== null;
+
+  return (
+    <div className="px-5 py-3 text-sm">
+      <div className="flex items-center gap-3">
+        <span
+          className="size-2.5 shrink-0 rounded-full"
+          style={{ backgroundColor: inUse ? (calendar.backgroundColor ?? "#a8a29e") : "#d6d3d1" }}
+        />
+        <div className="min-w-0 flex-1">
+          <p className={inUse ? "" : "text-stone-500"}>
+            {label}
+            {inUse && (
+              <span className="ml-2 rounded-full bg-accent-soft px-2 py-0.5 text-[11px] text-accent">In use</span>
+            )}
+          </p>
+          <p className="mt-0.5 text-xs text-stone-500">
+            {inUse
+              ? `${inUseText} "${googleName}" in Google.`
+              : deletedInGoogle
+                ? `It was deleted in Google. Create a new "${googleName}" calendar?`
+                : `Not set up. Creates a calendar called "${googleName}" in your Google account.`}
+          </p>
+        </div>
+
+        {inUse ? (
+          !confirming && (
+            <Link
+              href={`/calendars?confirm=${kind}`}
+              scroll={false}
+              className={`${ROW_BUTTON} hover:border-red-200 hover:bg-red-50 hover:text-red-700`}
+            >
+              Delete
+            </Link>
+          )
+        ) : (
+          <form action={createAction} className="flex shrink-0">
+            <input type="hidden" name="return_to" value="/calendars" />
+            <button className={`${ROW_BUTTON} hover:bg-stone-50`}>
+              Create
+            </button>
+          </form>
+        )}
+      </div>
+
+      {/* Deleting can't be undone, so it asks first */}
+      {inUse && confirming && (
+        <div className="mt-3 flex flex-wrap items-center justify-between gap-3 rounded-lg bg-stone-50 px-4 py-3">
+          <p className="text-xs leading-relaxed text-stone-600">{deleteText}</p>
+          <div className="flex shrink-0 items-center gap-3">
+            <Link href="/calendars" scroll={false} className="text-xs text-stone-500 hover:text-stone-900">
+              Cancel
+            </Link>
+            <form action={deleteAction}>
+              <button className="rounded-md border border-red-200 bg-white px-3 py-1 text-xs font-medium text-red-700 transition-colors hover:bg-red-50">
+                Delete from Google
+              </button>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {status === "created" && inUse && (
+        <p className="mt-2 text-xs text-accent">Created. It may take a moment to appear in Google Calendar.</p>
+      )}
+      {status === "deleted" && !inUse && (
+        <p className="mt-2 text-xs text-accent">Deleted from Google Calendar.</p>
+      )}
+      {status === "needs_permission" && (
+        <p className="mt-2 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">
+          Time Ledger needs permission to manage its calendars. Sign out, sign back in, and approve the
+          new permission on Google&apos;s screen, then try again.
+        </p>
+      )}
     </div>
   );
 }

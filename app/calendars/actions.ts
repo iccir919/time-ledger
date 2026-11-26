@@ -14,67 +14,76 @@ import {
 import { LOG_CALENDAR_NAME } from "@/lib/log-calendar";
 import { PLAN_CALENDAR_NAME } from "@/lib/plan-calendar";
 
-export async function saveTrackedCalendars(formData: FormData) {
-  const supabase = await createClient();
-  const selectedIds = formData.getAll("calendar_id").map(String);
-
-  // The Log calendar is always tracked (its checkbox is locked on, so it isn't sent)
-  const { data: settings, error: settingsError } = await supabase
+// The app's own calendars (Plan and Log) aren't in the "Your calendars" list, so these
+// two actions refuse to change them.
+async function appCalendarIds(supabase: Awaited<ReturnType<typeof createClient>>) {
+  const { data, error } = await supabase
     .from("user_settings")
-    .select("log_calendar_id")
+    .select("plan_calendar_id, log_calendar_id")
     .maybeSingle();
-  if (settingsError) {
-    throw new Error(settingsError.message);
+  if (error) {
+    throw new Error(error.message);
   }
-  const logCalendarId = settings?.log_calendar_id;
-  if (logCalendarId && !selectedIds.includes(logCalendarId)) {
-    selectedIds.push(logCalendarId);
-  }
+  return [data?.plan_calendar_id, data?.log_calendar_id].filter(Boolean);
+}
 
-  // Save or update each checked calendar
-  const rows = selectedIds.map((calendarId) => ({
-    google_calendar_id: calendarId,
-    name: String(formData.get(`name:${calendarId}`) ?? calendarId),
-    default_category_id:
-      String(formData.get(`default:${calendarId}`) ?? "") || null,
-  }));
-
-  if (rows.length > 0) {
-    const { error } = await supabase
-      .from("tracked_calendars")
-      .upsert(rows, { onConflict: "user_id,google_calendar_id" });
-
-    if (error) {
-      throw new Error(error.message);
-    }
-  }
-
-  // Remove calendars that were unchecked
-  const { data: existing, error: existingError } = await supabase
-    .from("tracked_calendars")
-    .select("id, google_calendar_id");
-
-  if (existingError) {
-    throw new Error(existingError.message);
-  }
-
-  const idsToRemove = existing
-    .filter((row) => !selectedIds.includes(row.google_calendar_id))
-    .map((row) => row.id);
-
-  if (idsToRemove.length > 0) {
-    const { error } = await supabase
-      .from("tracked_calendars")
-      .delete()
-      .in("id", idsToRemove);
-
-    if (error) {
-      throw new Error(error.message);
-    }
-  }
-
+function revalidateEverywhere() {
   revalidatePath("/calendars");
-  redirect("/calendars?saved=1");
+  revalidatePath("/budget");
+  revalidatePath("/dashboard");
+  revalidatePath("/inbox");
+  revalidatePath("/trends");
+}
+
+export type SaveResult = { error?: string };
+
+// Check or uncheck one of the user's calendars. Unchecking stops tracking it,
+// and its saved events go with it (they come back on the next sync if it's checked again).
+export async function setCalendarTracked(
+  calendarId: string,
+  name: string,
+  tracked: boolean
+): Promise<SaveResult> {
+  const supabase = await createClient();
+
+  if ((await appCalendarIds(supabase)).includes(calendarId)) {
+    return { error: "This calendar belongs to Time Ledger." };
+  }
+
+  const { error } = tracked
+    ? // Only these two columns, so a saved default category is kept
+      await supabase
+        .from("tracked_calendars")
+        .upsert({ google_calendar_id: calendarId, name }, { onConflict: "user_id,google_calendar_id" })
+    : await supabase.from("tracked_calendars").delete().eq("google_calendar_id", calendarId);
+
+  if (error) {
+    return { error: error.message };
+  }
+
+  revalidateEverywhere();
+  return {};
+}
+
+// Pick (or clear, with null) the category a tracked calendar's events get automatically
+export async function setDefaultCategory(calendarId: string, categoryId: string | null): Promise<SaveResult> {
+  const supabase = await createClient();
+
+  if ((await appCalendarIds(supabase)).includes(calendarId)) {
+    return { error: "This calendar belongs to Time Ledger." };
+  }
+
+  const { error } = await supabase
+    .from("tracked_calendars")
+    .update({ default_category_id: categoryId })
+    .eq("google_calendar_id", calendarId);
+
+  if (error) {
+    return { error: error.message };
+  }
+
+  revalidateEverywhere();
+  return {};
 }
 
 // Where to send the user after a Plan calendar action, with a status added.
@@ -152,31 +161,6 @@ export async function createPlanCalendar(formData: FormData) {
   redirect(backTo(formData, "created"));
 }
 
-// Forget the Plan calendar. It stays in Google Calendar with its blocks.
-export async function stopUsingPlanCalendar() {
-  const supabase = await createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-
-  if (!user) {
-    return;
-  }
-
-  const { error } = await supabase
-    .from("user_settings")
-    .update({ plan_calendar_id: null, updated_at: new Date().toISOString() })
-    .eq("user_id", user.id);
-
-  if (error) {
-    throw new Error(error.message);
-  }
-
-  revalidatePath("/calendars");
-  revalidatePath("/budget");
-  redirect("/calendars?plan=stopped");
-}
-
 // Delete the Plan calendar and all its blocks from Google, then forget it
 export async function deletePlanCalendar() {
   const supabase = await createClient();
@@ -236,6 +220,7 @@ export async function deletePlanCalendar() {
   revalidatePath("/budget");
   redirect("/calendars?plan=deleted");
 }
+
 // Create the "Time Ledger Log" calendar in the user's Google account, for done time logged
 // in the app, and track it so its events count. If it already exists, keep using it.
 export async function createLogCalendar() {
@@ -296,6 +281,17 @@ export async function createLogCalendar() {
     throw new Error(saveError.message);
   }
 
+  // An old Log calendar that was deleted in Google: stop tracking it (its saved events go with it)
+  if (existingId && existingId !== calendarId) {
+    const { error: oldError } = await supabase
+      .from("tracked_calendars")
+      .delete()
+      .eq("google_calendar_id", existingId);
+    if (oldError) {
+      throw new Error(oldError.message);
+    }
+  }
+
   // Track it, so time logged in it counts as done
   const { error: trackError } = await supabase
     .from("tracked_calendars")
@@ -312,33 +308,6 @@ export async function createLogCalendar() {
   revalidatePath("/budget");
   revalidatePath("/dashboard");
   redirect("/calendars?log=created");
-}
-
-// Stop logging to the Log calendar from the app. It stays in Google Calendar, and stays
-// tracked (so its time still counts) until it's unchecked above.
-export async function stopUsingLogCalendar() {
-  const supabase = await createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-
-  if (!user) {
-    return;
-  }
-
-  const { error } = await supabase
-    .from("user_settings")
-    .update({ log_calendar_id: null, updated_at: new Date().toISOString() })
-    .eq("user_id", user.id);
-
-  if (error) {
-    throw new Error(error.message);
-  }
-
-  revalidatePath("/calendars");
-  revalidatePath("/budget");
-  revalidatePath("/dashboard");
-  redirect("/calendars?log=stopped");
 }
 
 // Delete the Log calendar and everything logged in it from Google, stop tracking it,
