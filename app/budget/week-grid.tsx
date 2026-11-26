@@ -101,6 +101,8 @@ type WeekGridProps = {
   blocks: CalendarBlock[];
   // Adding plan blocks needs a Plan calendar
   canAddBlocks: boolean;
+  // Logging done time needs a Log calendar
+  canLog: boolean;
   timeZone: string;
   // Minutes since midnight today, or null when today isn't in this week
   nowMinutes: number | null;
@@ -215,6 +217,7 @@ export default function WeekGrid({
   scheduledAhead,
   blocks,
   canAddBlocks,
+  canLog,
   timeZone,
   nowMinutes,
 }: WeekGridProps) {
@@ -456,8 +459,9 @@ export default function WeekGrid({
           direction="next"
           onClick={selectedIndex < days.length - 1 ? () => stepDay(1) : undefined}
         />
-        {/* Small, in the top row. Later an "Add event" button can sit beside it. */}
-        {canAddBlocks && selectedKind !== "past" && (
+        {/* Small, in the top row. The popup picks Plan or Done. */}
+        {/* Planning is for today and later; logging done time works on any day */}
+        {((canAddBlocks && selectedKind !== "past") || canLog) && (
           <button
             type="button"
             onClick={addBlock}
@@ -491,6 +495,7 @@ export default function WeekGrid({
             nowMinutes={selectedKind === "today" ? nowMinutes : null}
             blocks={blocks}
             canAddBlocks={canAddBlocks && selectedKind !== "past"}
+            canLog={canLog}
             groups={groups}
             timeZone={timeZone}
             fillHeight
@@ -821,6 +826,8 @@ export default function WeekGrid({
           days={days.map((day) => ({ date: day.date, label: day.label }))}
           groups={groups}
           timeZone={timeZone}
+          canPlan={canAddBlocks && selectedKind !== "past"}
+          canLog={canLog}
           onClose={closeDialog}
         />
       )}

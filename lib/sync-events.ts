@@ -49,13 +49,26 @@ async function syncRecentWeeksOnce(userId: string, forceRefresh = false): Promis
   const syncStart = subWeeks(week.start, 1);
   const supabase = await createClient();
 
-  const { data: calendars, error } = await supabase
-    .from("tracked_calendars")
-    .select("id, name, google_calendar_id, default_category_id");
+  const [calendarsResult, categoriesResult] = await Promise.all([
+    supabase.from("tracked_calendars").select("id, name, google_calendar_id, default_category_id"),
+    supabase.from("categories").select("id"),
+  ]);
 
-  if (error) {
-    throw new Error(error.message);
+  if (calendarsResult.error) {
+    throw new Error(calendarsResult.error.message);
   }
+  if (categoriesResult.error) {
+    throw new Error(categoriesResult.error.message);
+  }
+  const calendars = calendarsResult.data;
+
+  // Events Time Ledger wrote (like done time logged in the app) carry their category's ID.
+  // Only IDs of this user's categories count, in case a category was deleted since.
+  const categoryIds = new Set(categoriesResult.data.map((category) => category.id));
+  const taggedCategory = (event: GoogleEvent) => {
+    const id = event.extendedProperties?.private?.timeLedgerCategoryId;
+    return id && categoryIds.has(id) ? id : null;
+  };
 
   for (const calendar of calendars) {
     let googleEvents: GoogleEvent[];
@@ -93,9 +106,12 @@ async function syncRecentWeeksOnce(userId: string, forceRefresh = false): Promis
       title: event.summary ?? "(No title)",
       start_at: event.start.dateTime!,
       end_at: event.end.dateTime!,
-      // Keep a category the user already chose; otherwise use the calendar's default
+      // A category Time Ledger tagged the event with comes first (so changing it in the app
+      // sticks); then one the user already chose; then the calendar's default
       category_id:
-        savedByGoogleId.get(event.id)?.category_id ?? calendar.default_category_id,
+        taggedCategory(event) ??
+        savedByGoogleId.get(event.id)?.category_id ??
+        calendar.default_category_id,
     }));
 
     if (rows.length > 0) {

@@ -18,7 +18,9 @@ export async function loadCalendarData(userId: string, timeZone: string, week: W
   const [eventsResult, groupsResult, settingsResult] = await Promise.all([
     supabase
       .from("events")
-      .select("id, title, start_at, end_at, category:categories(name, color)")
+      .select(
+        "id, title, start_at, end_at, google_event_id, category_id, category:categories(name, color), calendar:tracked_calendars(google_calendar_id)"
+      )
       .lt("start_at", week.end.toISOString())
       .gt("end_at", week.start.toISOString()),
     // Groups with their categories: the popup's dropdown, and the colors for plan blocks
@@ -27,7 +29,7 @@ export async function loadCalendarData(userId: string, timeZone: string, week: W
       .select("id, name, categories(id, name, color)")
       .order("sort_order")
       .order("sort_order", { referencedTable: "categories" }),
-    supabase.from("user_settings").select("plan_calendar_id").maybeSingle(),
+    supabase.from("user_settings").select("plan_calendar_id, log_calendar_id").maybeSingle(),
   ]);
 
   if (eventsResult.error) {
@@ -40,15 +42,38 @@ export async function loadCalendarData(userId: string, timeZone: string, week: W
     throw new Error(settingsResult.error.message);
   }
 
-  // Tracked events, colored by their category
-  const trackedBlocks: CalendarBlock[] = eventsResult.data.map((event) => ({
-    id: event.id,
-    kind: "tracked" as const,
-    title: event.title ?? "(No title)",
-    color: event.category?.color ?? NO_CATEGORY_COLOR,
-    startMs: Date.parse(event.start_at),
-    endMs: Date.parse(event.end_at),
-  }));
+  // A time as the user sees it: the date ("2026-11-24") and the clock time ("19:00")
+  function localParts(ms: number) {
+    const local = new TZDate(ms, timeZone);
+    return { date: format(local, "yyyy-MM-dd"), time: format(local, "HH:mm") };
+  }
+
+  // Tracked events, colored by their category. Ones logged in the app (in the Log calendar)
+  // get a draft, so they can be edited and deleted; events from other calendars are read-only.
+  const logCalendarId = settingsResult.data?.log_calendar_id ?? null;
+  const trackedBlocks: CalendarBlock[] = eventsResult.data.map((event) => {
+    const startMs = Date.parse(event.start_at);
+    const endMs = Date.parse(event.end_at);
+    const isLogged = logCalendarId !== null && event.calendar?.google_calendar_id === logCalendarId;
+    return {
+      id: event.id,
+      kind: "tracked" as const,
+      title: event.title ?? "(No title)",
+      color: event.category?.color ?? NO_CATEGORY_COLOR,
+      startMs,
+      endMs,
+      draft: isLogged
+        ? {
+            blockId: event.google_event_id,
+            kind: "done" as const,
+            categoryId: event.category_id ?? "",
+            date: localParts(startMs).date,
+            start: localParts(startMs).time,
+            end: localParts(endMs).time,
+          }
+        : undefined,
+    };
+  });
 
   // Plan blocks, read live from the Plan calendar in Google
   const planCalendarId = settingsResult.data?.plan_calendar_id ?? null;
@@ -71,12 +96,6 @@ export async function loadCalendarData(userId: string, timeZone: string, week: W
     )
   );
 
-  // A time as the user sees it: the date ("2026-11-24") and the clock time ("19:00")
-  function localParts(ms: number) {
-    const local = new TZDate(ms, timeZone);
-    return { date: format(local, "yyyy-MM-dd"), time: format(local, "HH:mm") };
-  }
-
   const planBlocks: CalendarBlock[] = planBlocksFromGoogle.map((block) => {
     const category = categoryByName.get(nameKey(block.title));
     const startMs = Date.parse(block.startAt);
@@ -94,6 +113,7 @@ export async function loadCalendarData(userId: string, timeZone: string, week: W
       // What the edit popup starts with. No category when the title doesn't match one.
       draft: {
         blockId: block.id,
+        kind: "plan" as const,
         categoryId: category?.id ?? "",
         date: start.date,
         start: start.time,
@@ -135,5 +155,7 @@ export async function loadCalendarData(userId: string, timeZone: string, week: W
     planMissing,
     // Adding and editing blocks needs a Plan calendar that still exists
     hasPlanCalendar: Boolean(planCalendarId) && !planMissing,
+    // Logging done time needs a Log calendar
+    hasLogCalendar: Boolean(logCalendarId),
   };
 }

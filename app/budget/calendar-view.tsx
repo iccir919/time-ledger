@@ -26,7 +26,7 @@ export default async function CalendarView({ userId, timeZone, week }: CalendarV
           Tracked (right)
         </span>
         <span>Times shown in {timeZone}</span>
-        {data.hasPlanCalendar && <span>Click an empty spot to add a plan block</span>}
+        {(data.hasPlanCalendar || data.hasLogCalendar) && <span>Click an empty spot to add time</span>}
       </div>
 
       {data.planMissing && (
@@ -62,6 +62,7 @@ export default async function CalendarView({ userId, timeZone, week }: CalendarV
         nowMinutes={data.nowMinutes}
         blocks={data.blocks}
         canAddBlocks={data.hasPlanCalendar}
+        canLog={data.hasLogCalendar}
         groups={data.groups}
         timeZone={timeZone}
         showFilter

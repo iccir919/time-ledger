@@ -1,12 +1,15 @@
 "use client";
 
+import Link from "next/link";
 import { useEffect, useState, useTransition, type FormEvent } from "react";
 import CategorySelect, { type CategoryGroup } from "@/components/category-select";
-import { deletePlanBlock, savePlanBlock } from "./actions";
+import { deleteBlock, saveBlock, type BlockKind } from "./actions";
 
-// What the popup starts with. blockId is set when editing an existing block.
+// What the popup starts with. blockId is set when editing an existing block or logged event;
+// kind says which (a new one picks Plan or Done on its own when kind is left out).
 export type BlockDraft = {
   blockId?: string;
+  kind?: BlockKind;
   categoryId?: string;
   date: string;
   start: string; // "HH:MM"
@@ -18,18 +21,56 @@ type PlanBlockDialogProps = {
   days: { date: string; label: string }[];
   groups: CategoryGroup[];
   timeZone: string;
+  // Which calendars exist to write to: the Plan calendar, and the Log calendar for done time
+  canPlan?: boolean;
+  canLog?: boolean;
   onClose: () => void;
 };
 
-// A popup for adding a block to the Plan calendar, or editing or deleting one
+// Now as "YYYY-MM-DDTHH:MM" in the user's time zone, to tell past times from later ones
+function nowLocal(timeZone: string) {
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    hourCycle: "h23",
+  }).formatToParts(new Date());
+  const part = (type: string) => parts.find((p) => p.type === type)?.value ?? "00";
+  return `${part("year")}-${part("month")}-${part("day")}T${part("hour")}:${part("minute")}`;
+}
+
+// A popup for adding time: a plan block (Plan calendar) or done time (Log calendar),
+// with a Plan / Done switch. Also edits or deletes either kind.
 export default function PlanBlockDialog({
   draft,
   days,
   groups,
   timeZone,
+  canPlan = true,
+  canLog = false,
   onClose,
 }: PlanBlockDialogProps) {
   const isEditing = Boolean(draft.blockId);
+
+  // Plan or Done: what the draft says, otherwise Done for a time that's passed and Plan for
+  // one ahead, as long as that calendar exists
+  const [kind, setKind] = useState<BlockKind>(() => {
+    const preferred: BlockKind = draft.kind ?? (`${draft.date}T${draft.start}` < nowLocal(timeZone) ? "done" : "plan");
+    if (isEditing) {
+      return preferred;
+    }
+    if (preferred === "done" && !canLog) {
+      return "plan";
+    }
+    if (preferred === "plan" && !canPlan) {
+      return "done";
+    }
+    return preferred;
+  });
+  const showSwitch = !isEditing && canPlan && canLog;
   const [error, setError] = useState("");
   const [start, setStart] = useState(draft.start);
   const [end, setEnd] = useState(draft.end);
@@ -63,7 +104,7 @@ export default function PlanBlockDialog({
     setError("");
 
     startSaving(async () => {
-      const result = await savePlanBlock(formData);
+      const result = await saveBlock(formData);
       if (result.error) {
         setError(result.error);
         return;
@@ -80,7 +121,7 @@ export default function PlanBlockDialog({
     setError("");
 
     startDeleting(async () => {
-      const result = await deletePlanBlock(blockId);
+      const result = await deleteBlock(blockId, kind);
       if (result.error) {
         setError(result.error);
         return;
@@ -106,11 +147,54 @@ export default function PlanBlockDialog({
         className="w-full max-w-sm rounded-xl border border-stone-200 bg-white p-6 shadow-lg"
       >
         <h2 id="plan-block-title" className="font-semibold">
-          {isEditing ? "Edit plan block" : "Add a plan block"}
+          {isEditing
+            ? kind === "done"
+              ? "Edit logged time"
+              : "Edit plan block"
+            : kind === "done"
+              ? "Log time"
+              : "Add a plan block"}
         </h2>
 
-        <form onSubmit={handleSubmit} className="mt-5 space-y-4">
+        {/* Plan or Done, when adding and both calendars exist */}
+        {showSwitch && (
+          <div className="mt-4 flex rounded-lg bg-stone-100 p-1" role="group" aria-label="Plan or done">
+            {(["plan", "done"] as const).map((option) => (
+              <button
+                key={option}
+                type="button"
+                aria-pressed={kind === option}
+                onClick={() => setKind(option)}
+                className={`flex-1 rounded-md py-1.5 text-sm transition-colors ${
+                  kind === option ? "bg-white font-medium text-stone-900 shadow-sm" : "text-stone-500 hover:text-stone-800"
+                }`}
+              >
+                {option === "plan" ? "Plan" : "Done"}
+              </button>
+            ))}
+          </div>
+        )}
+        {!isEditing && (
+          <p className="mt-2 text-xs text-stone-500">
+            {kind === "done"
+              ? "Saved to your Log calendar. Counts as done."
+              : "Saved to your Plan calendar."}
+            {!canLog && (
+              <>
+                {" "}
+                To log done time here,{" "}
+                <Link href="/calendars" className="font-medium text-accent hover:underline">
+                  create a Log calendar
+                </Link>
+                .
+              </>
+            )}
+          </p>
+        )}
+
+        <form onSubmit={handleSubmit} className="mt-4 space-y-4">
           <input type="hidden" name="time_zone" value={timeZone} />
+          <input type="hidden" name="kind" value={kind} />
           {draft.blockId && <input type="hidden" name="block_id" value={draft.blockId} />}
 
           <div className="text-sm">
@@ -198,7 +282,7 @@ export default function PlanBlockDialog({
                 disabled={isBusy}
                 className="rounded-lg bg-accent px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-accent-hover disabled:opacity-60"
               >
-                {isSaving ? "Saving..." : isEditing ? "Save" : "Add"}
+                {isSaving ? "Saving..." : isEditing ? "Save" : kind === "done" ? "Log it" : "Add"}
               </button>
             </div>
           </div>

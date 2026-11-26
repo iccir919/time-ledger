@@ -16,6 +16,8 @@ export type GoogleEvent = {
   start: { dateTime?: string; date?: string };
   end: { dateTime?: string; date?: string };
   attendees?: { self?: boolean; responseStatus?: string }[];
+  // Hidden data Time Ledger stores on events it writes, e.g. the category's ID
+  extendedProperties?: { private?: Record<string, string> };
 };
 
 const FIVE_MINUTES = 5 * 60 * 1000;
@@ -228,6 +230,8 @@ export type NewGoogleEvent = {
   summary: string;
   start: { dateTime: string; timeZone: string };
   end: { dateTime: string; timeZone: string };
+  // "private": only the user sees the details, even if the calendar is shared
+  visibility?: "private";
   extendedProperties?: { private?: Record<string, string> };
 };
 

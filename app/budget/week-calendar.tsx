@@ -21,7 +21,7 @@ export type CalendarBlock = {
   color: string;
   startMs: number;
   endMs: number;
-  // Plan blocks only: what the edit popup starts with
+  // What the edit popup starts with: plan blocks, and done time logged in the app
   draft?: BlockDraft;
 };
 
@@ -55,6 +55,8 @@ type WeekCalendarProps = {
   blocks: CalendarBlock[];
   // Adding blocks needs a Plan calendar
   canAddBlocks: boolean;
+  // There's a Log calendar to log done time to (and edit time logged in the app)
+  canLog?: boolean;
   groups: CategoryGroup[];
   timeZone: string;
   // When set, the calendar is this many pixels tall and scrolls, starting just before now
@@ -65,7 +67,7 @@ type WeekCalendarProps = {
   headerHref?: string;
   // The category new blocks start with, e.g. the one clicked in the Plan grid
   defaultCategoryId?: string;
-  // Leave out the "Add plan block" button below, when the page puts its own elsewhere
+  // Leave out the "Add time" button below, when the page puts its own elsewhere
   hideAddButton?: boolean;
   // Show a "Show All · Plan · Done" filter and a small "+ Add" above the calendar
   // (in place of the button below), as the Plan page's Calendar view does
@@ -203,6 +205,7 @@ export default function WeekCalendar({
   nowMinutes,
   blocks,
   canAddBlocks,
+  canLog = false,
   groups,
   timeZone,
   scrollHeight,
@@ -213,6 +216,8 @@ export default function WeekCalendar({
   showFilter,
 }: WeekCalendarProps) {
   const [filter, setFilter] = useState<Filter>("all");
+  // Adding works when there's somewhere to write: the Plan calendar, the Log calendar, or both
+  const canAdd = canAddBlocks || canLog;
   const planBlocks = blocks.filter((block) => block.kind === "plan");
   const trackedBlocks = blocks.filter((block) => block.kind === "tracked");
   const hours = Array.from({ length: 24 }, (_, hour) => hour);
@@ -253,7 +258,7 @@ export default function WeekCalendar({
 
   // Clicking an empty spot in a day: start a draft at that time, rounded down to 30 minutes
   function handleDayClick(event: MouseEvent<HTMLDivElement>, day: CalendarDay) {
-    if (!canAddBlocks || (event.target as HTMLElement).closest("[data-block]")) {
+    if (!canAdd || (event.target as HTMLElement).closest("[data-block]")) {
       return;
     }
     const top = event.currentTarget.getBoundingClientRect().top;
@@ -261,7 +266,7 @@ export default function WeekCalendar({
     setDraft({ ...draftAt(day.date, Math.floor(minutes / 30) * 30), categoryId: defaultCategoryId });
   }
 
-  // The "Add plan block" button: today if it's in this week (next full hour), otherwise Monday 9 AM
+  // The "Add time" / "+ Add" button: today if it's in this week (next full hour), otherwise Monday 9 AM
   function openFromButton() {
     const isTodayShown = days.some((day) => day.date === today);
     if (isTodayShown && nowMinutes !== null) {
@@ -297,7 +302,7 @@ export default function WeekCalendar({
               ))}
             </div>
           </div>
-          {canAddBlocks && (
+          {canAdd && (
             <button
               type="button"
               onClick={openFromButton}
@@ -356,7 +361,7 @@ export default function WeekCalendar({
               <div
                 key={day.date}
                 onClick={(event) => handleDayClick(event, day)}
-                className={`relative border-l border-stone-100 ${dayClass(day.date)} ${day.date === today ? "bg-accent-soft/30" : ""} ${canAddBlocks ? "cursor-pointer" : ""}`}
+                className={`relative border-l border-stone-100 ${dayClass(day.date)} ${day.date === today ? "bg-accent-soft/30" : ""} ${canAdd ? "cursor-pointer" : ""}`}
               >
                 {hours.map((hour) => (
                   <div
@@ -379,6 +384,8 @@ export default function WeekCalendar({
                     blocks={layoutDay(trackedBlocks, day)}
                     side={filter === "done" ? "full" : "right"}
                     timeRange={timeRange}
+                    // Only time logged in the app has a draft; events from other calendars stay read-only
+                    onEdit={canLog ? setDraft : undefined}
                   />
                 )}
 
@@ -395,14 +402,14 @@ export default function WeekCalendar({
       </div>
 
       {/* Below the calendar, full width. Later an "Add event" button sits beside it. */}
-      {canAddBlocks && !hideAddButton && !showFilter && (
+      {canAdd && !hideAddButton && !showFilter && (
         <div className="mt-3 flex justify-center gap-3">
           <button
             type="button"
             onClick={openFromButton}
             className="w-full rounded-lg bg-accent px-4 py-2.5 text-sm font-medium text-white transition-colors hover:bg-accent-hover"
           >
-            Add plan block
+            Add time
           </button>
         </div>
       )}
@@ -413,6 +420,8 @@ export default function WeekCalendar({
           days={days.map((day) => ({ date: day.date, label: day.label }))}
           groups={groups}
           timeZone={timeZone}
+          canPlan={canAddBlocks}
+          canLog={canLog}
           onClose={closeDialog}
         />
       )}

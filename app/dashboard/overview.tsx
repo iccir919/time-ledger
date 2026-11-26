@@ -199,6 +199,7 @@ export default async function Overview({ userId, timeZone, week }: OverviewProps
             nowMinutes={calendar.nowMinutes}
             blocks={calendar.blocks}
             canAddBlocks={calendar.hasPlanCalendar}
+            canLog={calendar.hasLogCalendar}
             groups={calendar.groups}
             timeZone={timeZone}
             scrollHeight={TODAY_CALENDAR_HEIGHT}
@@ -206,7 +207,7 @@ export default async function Overview({ userId, timeZone, week }: OverviewProps
           />
           <p className="mt-2 text-xs text-stone-400">
             Plan on the left, tracked on the right.
-            {calendar.hasPlanCalendar && " Click an empty spot to add a plan block."}
+            {(calendar.hasPlanCalendar || calendar.hasLogCalendar) && " Click an empty spot to add time."}
           </p>
         </section>
 

@@ -147,8 +147,13 @@ function nextDay(date: string) {
   return format(addDays(parseISO(date), 1), "yyyy-MM-dd");
 }
 
-// The user and their Plan calendar, or an error message to show
-async function getPlanCalendar() {
+// Plan blocks go to the Plan calendar; done time logged in the app goes to the Log calendar
+export type BlockKind = "plan" | "done";
+
+const CALENDAR_LABEL: Record<BlockKind, string> = { plan: "Plan", done: "Log" };
+
+// The user and the calendar for this kind of block, or an error message to show
+async function getWriteCalendar(kind: BlockKind) {
   const supabase = await createClient();
   const {
     data: { user },
@@ -160,23 +165,26 @@ async function getPlanCalendar() {
 
   const { data, error } = await supabase
     .from("user_settings")
-    .select("plan_calendar_id")
+    .select("plan_calendar_id, log_calendar_id")
     .maybeSingle();
 
   if (error) {
     throw new Error(error.message);
   }
-  if (!data?.plan_calendar_id) {
-    return { error: "Create your Plan calendar first." } as const;
+  const calendarId = kind === "plan" ? data?.plan_calendar_id : data?.log_calendar_id;
+  if (!calendarId) {
+    return { error: `Create your ${CALENDAR_LABEL[kind]} calendar first, on the Calendars page.` } as const;
   }
 
-  return { supabase, userId: user.id, planCalendarId: data.plan_calendar_id };
+  return { supabase, userId: user.id, calendarId };
 }
 
-// Add a block to the Time Ledger Plan calendar, or change one (when block_id is set).
-// The event is titled with the category's name, so it matches that category.
+// Save a block: a plan block to the Plan calendar, or done time to the Log calendar
+// (kind = "plan" or "done"). Changes an existing one when block_id is set.
+// The event is titled with the category's name, tagged with its ID, and private.
 // An end time earlier than the start means the block ends the next day.
-export async function savePlanBlock(formData: FormData): Promise<BlockResult> {
+export async function saveBlock(formData: FormData): Promise<BlockResult> {
+  const kind: BlockKind = formData.get("kind") === "done" ? "done" : "plan";
   const blockId = String(formData.get("block_id") ?? "");
   const categoryId = String(formData.get("category_id") ?? "");
   const date = String(formData.get("date") ?? "");
@@ -194,12 +202,12 @@ export async function savePlanBlock(formData: FormData): Promise<BlockResult> {
     return { error: "The start and end times are the same." };
   }
 
-  const plan = await getPlanCalendar();
-  if ("error" in plan) {
-    return { error: plan.error };
+  const target = await getWriteCalendar(kind);
+  if ("error" in target) {
+    return { error: target.error };
   }
 
-  const { data: category, error: categoryError } = await plan.supabase
+  const { data: category, error: categoryError } = await target.supabase
     .from("categories")
     .select("name")
     .eq("id", categoryId)
@@ -219,14 +227,15 @@ export async function savePlanBlock(formData: FormData): Promise<BlockResult> {
     summary: category.name,
     start: { dateTime: `${date}T${startTime}:00`, timeZone },
     end: { dateTime: `${endDate}T${endTime}:00`, timeZone },
+    visibility: "private" as const,
     extendedProperties: { private: { timeLedgerCategoryId: categoryId } },
   };
 
   try {
-    const savedId = await withGoogleAccessToken(plan.userId, (accessToken) =>
+    const savedId = await withGoogleAccessToken(target.userId, (accessToken) =>
       blockId
-        ? updateGoogleEvent(accessToken, plan.planCalendarId, blockId, event)
-        : insertGoogleEvent(accessToken, plan.planCalendarId, event)
+        ? updateGoogleEvent(accessToken, target.calendarId, blockId, event)
+        : insertGoogleEvent(accessToken, target.calendarId, event)
     );
 
     if (!savedId) {
@@ -239,31 +248,32 @@ export async function savePlanBlock(formData: FormData): Promise<BlockResult> {
     if (error instanceof GoogleApiError && (error.status === 404 || error.status === 410)) {
       return {
         error: blockId
-          ? "That block wasn't found. It may have been deleted in Google Calendar."
-          : "Your Plan calendar wasn't found. Create it again on the Calendars page.",
+          ? "That event wasn't found. It may have been deleted in Google Calendar."
+          : `Your ${CALENDAR_LABEL[kind]} calendar wasn't found. Create it again on the Calendars page.`,
       };
     }
     throw error;
   }
 
   revalidatePath("/budget");
+  revalidatePath("/dashboard");
   return {};
 }
 
-// Delete a block from the Plan calendar
-export async function deletePlanBlock(blockId: string): Promise<BlockResult> {
+// Delete a plan block or a logged done event
+export async function deleteBlock(blockId: string, kind: BlockKind): Promise<BlockResult> {
   if (!blockId) {
-    return { error: "No block to delete." };
+    return { error: "Nothing to delete." };
   }
 
-  const plan = await getPlanCalendar();
-  if ("error" in plan) {
-    return { error: plan.error };
+  const target = await getWriteCalendar(kind);
+  if ("error" in target) {
+    return { error: target.error };
   }
 
   try {
-    const done = await withGoogleAccessToken(plan.userId, async (accessToken) => {
-      await deleteGoogleEvent(accessToken, plan.planCalendarId, blockId);
+    const done = await withGoogleAccessToken(target.userId, async (accessToken) => {
+      await deleteGoogleEvent(accessToken, target.calendarId, blockId);
       return true;
     });
 
@@ -281,5 +291,6 @@ export async function deletePlanBlock(blockId: string): Promise<BlockResult> {
   }
 
   revalidatePath("/budget");
+  revalidatePath("/dashboard");
   return {};
 }
