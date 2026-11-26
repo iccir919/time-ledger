@@ -1,7 +1,8 @@
 import { TZDate } from "@date-fns/tz";
-import { addDays, addWeeks, format, startOfWeek, subWeeks } from "date-fns";
+import { addDays, addMonths, addWeeks, format, startOfWeek, subMonths, subWeeks } from "date-fns";
 
 const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
+const MONTH_PATTERN = /^\d{4}-\d{2}$/;
 
 export type Week = ReturnType<typeof getWeek>;
 
@@ -100,4 +101,52 @@ export function focusDays(dates: string[], today: string) {
   }
   const start = Math.min(Math.max(todayIndex - 1, 0), dates.length - 3);
   return dates.slice(start, start + 3);
+}
+
+export type MonthGrid = ReturnType<typeof getMonthGrid>;
+
+// A month as a calendar shows it: whole weeks, Monday to Sunday, from the week the 1st
+// falls in to the week the last day falls in (so 5 or 6 rows). Pass "2026-11" for November;
+// leave it out for this month. Like the Plan page's weeks, it goes back no further than
+// the month of last week, and forward without limit.
+export function getMonthGrid(timeZone: string, month?: string) {
+  const now = TZDate.tz(timeZone);
+  const earliest = subWeeks(startOfWeek(now, { weekStartsOn: 1 }), 1);
+  const earliestIndex = earliest.getFullYear() * 12 + earliest.getMonth();
+
+  let index = now.getFullYear() * 12 + now.getMonth();
+  if (month && MONTH_PATTERN.test(month)) {
+    const [year, monthNumber] = month.split("-").map(Number);
+    if (monthNumber >= 1 && monthNumber <= 12) {
+      index = year * 12 + monthNumber - 1;
+    }
+  }
+  index = Math.max(index, earliestIndex);
+
+  const first = new TZDate(Math.floor(index / 12), index % 12, 1, timeZone);
+  const nextFirst = addMonths(first, 1);
+  const start = startOfWeek(first, { weekStartsOn: 1 });
+  // The Monday after the week holding the month's last day
+  const end = addWeeks(startOfWeek(addDays(nextFirst, -1), { weekStartsOn: 1 }), 1);
+
+  const days: { date: string; start: TZDate; end: TZDate }[] = [];
+  for (let day = start; day < end; day = addDays(day, 1)) {
+    days.push({ date: format(day, "yyyy-MM-dd"), start: day, end: addDays(day, 1) });
+  }
+
+  const monthKey = format(first, "yyyy-MM");
+  return {
+    start,
+    end,
+    days,
+    today: format(now, "yyyy-MM-dd"),
+    monthKey,
+    // e.g. "November 2026"
+    title: format(first, "MMMM yyyy"),
+    previousMonth: format(subMonths(first, 1), "yyyy-MM"),
+    nextMonth: format(nextFirst, "yyyy-MM"),
+    isCurrentMonth: monthKey === format(now, "yyyy-MM"),
+    canGoBack: index > earliestIndex,
+    canGoForward: true,
+  };
 }

@@ -1,6 +1,5 @@
 import "server-only";
 import { GoogleApiError, listGoogleEvents, withGoogleAccessToken } from "@/lib/google";
-import type { Week } from "@/lib/week";
 
 export type PlanBlock = {
   id: string;
@@ -17,16 +16,16 @@ export type PlanBlocksResult = {
   missing: boolean;
 };
 
-// The timed blocks on the user's Plan calendar for one week. Never throws,
+// The timed blocks on the user's Plan calendar between two times (a week or a month). Never throws,
 // so pages can show a notice instead of an error screen.
 export async function loadPlanBlocks(
   userId: string,
   planCalendarId: string,
-  week: Week
+  range: { start: Date; end: Date }
 ): Promise<PlanBlocksResult> {
   try {
     const events = await withGoogleAccessToken(userId, (accessToken) =>
-      listGoogleEvents(accessToken, planCalendarId, week.start, week.end)
+      listGoogleEvents(accessToken, planCalendarId, range.start, range.end)
     );
 
     if (!events) {

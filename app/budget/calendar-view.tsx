@@ -1,19 +1,22 @@
 import Link from "next/link";
 import { loadCalendarData } from "@/lib/calendar-data";
 import { PLAN_CALENDAR_NAME } from "@/lib/plan-calendar";
-import { focusDays, type Week } from "@/lib/week";
+import { focusDays, type MonthGrid, type Week } from "@/lib/week";
+import MonthCalendar from "./month-calendar";
 import WeekCalendar from "./week-calendar";
 
 type CalendarViewProps = {
   userId: string;
   timeZone: string;
   week: Week;
+  // Set to show this month instead of the week
+  month: MonthGrid | null;
 };
 
 // Plan → Calendar: the whole week, with plan blocks and tracked events side by side,
-// and a sidebar to add time and choose which categories show
-export default async function CalendarView({ userId, timeZone, week }: CalendarViewProps) {
-  const data = await loadCalendarData(userId, timeZone, week);
+// or a month of days with chips. A sidebar adds time and chooses which categories show.
+export default async function CalendarView({ userId, timeZone, week, month }: CalendarViewProps) {
+  const data = await loadCalendarData(userId, timeZone, month ?? week);
 
   return (
     <>
@@ -43,18 +46,32 @@ export default async function CalendarView({ userId, timeZone, week }: CalendarV
         </p>
       )}
 
-      <WeekCalendar
-        days={data.days}
-        today={week.today}
-        mobileDates={focusDays(data.days.map((day) => day.date), week.today)}
-        nowMinutes={data.nowMinutes}
-        blocks={data.blocks}
-        canAddBlocks={data.hasPlanCalendar}
-        canLog={data.hasLogCalendar}
-        groups={data.groups}
-        timeZone={timeZone}
-        withSidebar
-      />
+      {month ? (
+        <MonthCalendar
+          days={data.days}
+          monthKey={month.monthKey}
+          today={month.today}
+          nowMinutes={data.nowMinutes}
+          blocks={data.blocks}
+          canAddBlocks={data.hasPlanCalendar}
+          canLog={data.hasLogCalendar}
+          groups={data.groups}
+          timeZone={timeZone}
+        />
+      ) : (
+        <WeekCalendar
+          days={data.days}
+          today={week.today}
+          mobileDates={focusDays(data.days.map((day) => day.date), week.today)}
+          nowMinutes={data.nowMinutes}
+          blocks={data.blocks}
+          canAddBlocks={data.hasPlanCalendar}
+          canLog={data.hasLogCalendar}
+          groups={data.groups}
+          timeZone={timeZone}
+          withSidebar
+        />
+      )}
     </>
   );
 }

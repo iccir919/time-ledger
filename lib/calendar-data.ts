@@ -3,16 +3,23 @@ import { TZDate } from "@date-fns/tz";
 import { format } from "date-fns";
 import { createClient } from "@/lib/supabase/server";
 import { loadPlanBlocks, nameKey, type PlanBlock } from "@/lib/plan-blocks";
-import type { Week } from "@/lib/week";
 import type { CalendarBlock, CalendarDay } from "@/app/budget/week-calendar";
 
 // Gray for events without a category and plan blocks that don't match one
 export const NO_CATEGORY_COLOR = "#a8a29e";
 
-// Everything the calendar needs for one week: tracked events and plan blocks as calendar blocks,
+// A week, or the whole weeks a month view shows
+type CalendarRange = {
+  start: Date;
+  end: Date;
+  days: { date: string; start: Date; end: Date }[];
+  today: string;
+};
+
+// Everything the calendar needs for one week (or a month's weeks): tracked events and plan blocks as calendar blocks,
 // the days, the categories (for the popup), and the Plan calendar's state.
 // Used by Plan → Calendar (the whole week) and the dashboard (just today).
-export async function loadCalendarData(userId: string, timeZone: string, week: Week) {
+export async function loadCalendarData(userId: string, timeZone: string, week: CalendarRange) {
   const supabase = await createClient();
 
   const [eventsResult, groupsResult, settingsResult] = await Promise.all([

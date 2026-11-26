@@ -1,5 +1,6 @@
 "use client";
 
+import MiniMonth from "./mini-month";
 import { UNCATEGORIZED } from "./use-hidden-categories";
 
 export type ColoredCategoryGroup = {
@@ -15,11 +16,22 @@ type CalendarSidebarProps = {
   // Opens the popup; left out when there's nowhere to add time
   onAdd?: () => void;
   timeZone: string;
+  today: string;
+  // The small month: which month it opens on, and the dates being shown (highlighted)
+  miniMonth: { initialMonth: string; selected: string[] };
 };
 
-// The Plan page's left column: "+ Add", the categories to show, and a small legend.
+// The Plan page's left column: "+ Add", a small month, the categories to show, and a legend.
 // On narrow screens it sits above the calendar, with the categories folded away.
-export default function CalendarSidebar({ groups, hidden, onToggle, onAdd, timeZone }: CalendarSidebarProps) {
+export default function CalendarSidebar({
+  groups,
+  hidden,
+  onToggle,
+  onAdd,
+  timeZone,
+  today,
+  miniMonth,
+}: CalendarSidebarProps) {
   const hiddenCount = hidden.size;
 
   const categoryList = (
@@ -64,6 +76,16 @@ export default function CalendarSidebar({ groups, hidden, onToggle, onAdd, timeZ
           + Add
         </button>
       )}
+
+      {/* Keyed by month, so it starts over on the right month after moving to another week */}
+      <div className="mt-6 hidden lg:block">
+        <MiniMonth
+          key={miniMonth.initialMonth}
+          initialMonth={miniMonth.initialMonth}
+          today={today}
+          selected={miniMonth.selected}
+        />
+      </div>
 
       {/* Wide screens: always open */}
       <div className="mt-6 hidden lg:block">

@@ -7,7 +7,7 @@ import AppHeader from "@/components/app-header";
 import ReconnectGoogle from "@/components/reconnect-google";
 import { formatHours, hoursWithin } from "@/lib/hours";
 import { syncRecentWeeks, type SyncResult } from "@/lib/sync-events";
-import { getWeekInRange, type Week } from "@/lib/week";
+import { getMonthGrid, getWeekInRange, type Week } from "@/lib/week";
 import { PLAN_CALENDAR_NAME } from "@/lib/plan-calendar";
 import { loadPlanBlocks, nameKey } from "@/lib/plan-blocks";
 import { copyLastWeekGoals } from "./actions";
@@ -24,6 +24,9 @@ type BudgetPageProps = {
     week?: string;
     plan?: string;
     view?: string;
+    // The calendar's range: "month" for a month (?month=2026-11), otherwise a week
+    range?: string;
+    month?: string;
   }>;
 };
 
@@ -46,12 +49,17 @@ export default async function BudgetPage({ searchParams }: BudgetPageProps) {
   }
 
   // The week being viewed, from the URL (?week=2026-11-23); defaults to this week
-  const { week: weekParam, plan, view: viewParam } = await searchParams;
+  const { week: weekParam, plan, view: viewParam, range, month: monthParam } = await searchParams;
   // Calendar is the default; the grid is ?view=grid
   const view = viewParam === "grid" ? "grid" : "calendar";
   const week =
     sync?.status === "ok"
       ? getWeekInRange(sync.timeZone, weekParam, { weeksBack: 1, weeksAhead: Infinity })
+      : null;
+  // The calendar can show a month instead; the grid is always a week
+  const month =
+    sync?.status === "ok" && view === "calendar" && range === "month"
+      ? getMonthGrid(sync.timeZone, monthParam)
       : null;
 
   return (
@@ -71,10 +79,10 @@ export default async function BudgetPage({ searchParams }: BudgetPageProps) {
 
         {sync?.status === "ok" && week && (
           <>
-            <PlanTopBar week={week} timeZone={sync.timeZone} view={view} />
+            <PlanTopBar week={week} month={month} timeZone={sync.timeZone} view={view} />
 
             {view === "calendar" ? (
-              <CalendarView userId={user.id} timeZone={sync.timeZone} week={week} />
+              <CalendarView userId={user.id} timeZone={sync.timeZone} week={week} month={month} />
             ) : (
               <Plan
                 userId={user.id}

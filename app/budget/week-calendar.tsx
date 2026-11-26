@@ -291,6 +291,9 @@ export default function WeekCalendar({
           onToggle={toggle}
           onAdd={canAdd ? openFromButton : undefined}
           timeZone={timeZone}
+          today={today}
+          // The month the week mostly falls in (its Thursday's)
+          miniMonth={{ initialMonth: days[Math.min(3, days.length - 1)].date.slice(0, 7), selected: days.map((day) => day.date) }}
         />
       )}
 
