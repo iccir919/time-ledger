@@ -391,6 +391,14 @@ async function Plan({ userId, timeZone, week, planStatus }: PlanProps) {
         days={days}
         today={week.today}
         goals={weekGoals}
+        // The week's categorized events, for totals that count overlapping time once
+        doneIntervals={eventsResult.data
+          .filter((event) => event.category_id)
+          .map((event) => ({
+            categoryId: event.category_id!,
+            startMs: Date.parse(event.start_at),
+            endMs: Date.parse(event.end_at),
+          }))}
         actual={actual}
         typed={typed}
         scheduled={scheduled}

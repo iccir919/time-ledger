@@ -2,6 +2,7 @@
 
 import { useCallback, useState } from "react";
 import Link from "next/link";
+import { clockHours, overlapNote } from "@/lib/clock-time";
 import { directionOf, goalProgress, overLimits, type GoalDirection } from "@/lib/goals";
 import { formatHours } from "@/lib/hours";
 import type { WeekGoals } from "@/lib/week-goals";
@@ -47,6 +48,8 @@ type WeekGridProps = {
   today: string;
   // Each category's goal and the week's progress, the same numbers the sidebar shows
   goals: WeekGoals;
+  // The week's categorized events, so totals can count overlapping time once
+  doneIntervals: { categoryId: string; startMs: number; endMs: number }[];
   // Hours keyed by "<categoryId>:<date>":
   // actual (tracked), typed (typed into the grid), scheduled (Plan calendar blocks)
   actual: Record<string, number>;
@@ -155,6 +158,7 @@ export default function WeekGrid({
   days,
   today,
   goals,
+  doneIntervals,
   actual,
   typed,
   scheduled,
@@ -171,6 +175,7 @@ export default function WeekGrid({
     .map((group) => ({ ...group, categories: group.categories.filter((category) => !hidden.has(category.id)) }))
     .filter((group) => group.categories.length > 0);
   const shownCategories = shownGroups.flatMap((group) => group.categories);
+  const shownIds = new Set(shownCategories.map((category) => category.id));
 
   // Day plans: each one's text, so a field can be empty while you type. Keyed by "<categoryId>:<date>".
   const [dayText, setDayText] = useState<Record<string, string>>(() => asText(typed));
@@ -219,8 +224,13 @@ export default function WeekGrid({
   const overTotal = overs.reduce((sum, over) => sum + over.hours, 0);
   const doneTotal = categories.reduce((sum, category) => sum + goalOf(category.id).done, 0);
   const aheadTotal = categories.reduce((sum, category) => sum + goalOf(category.id).ahead, 0);
-  // "Done this week" leaves out time past limits: that shows on its own, as "Over limit"
-  const doneCounted = doneTotal - overTotal;
+  // "Done this week" is real hours (overlapping events count once), leaving out time past
+  // limits: that shows on its own, as "Over limit"
+  const weekStartMs = days[0].startMs;
+  const weekEndMs = days[days.length - 1].endMs;
+  const doneClock = clockHours(doneIntervals, weekStartMs, weekEndMs);
+  const doneCounted = Math.max(0, doneClock - overTotal);
+  const doneNote = overlapNote(doneTotal, doneClock, formatHours);
   // The bar's pieces, counted the same way goalProgress counts them (nothing past a goal)
   const segments = goalRows
     .filter((row) => row.goal > 0 && directionOf(row.goal, row.direction) === "at_least")
@@ -332,17 +342,28 @@ export default function WeekGrid({
     );
   }
 
-  // A day's total: done for past days and today, planned for later days
+  // A day's total for the rows showing: real hours done for past days and today (overlapping
+  // events count once), hours planned for later days
   function dayTotal(day: GridDay) {
     const future = kindOf(day.date) === "future";
-    const total = shownCategories.reduce((sum, category) => {
-      const key = cellKey(category.id, day.date);
-      return sum + (future ? plannedAt(key) : actualAt(key));
-    }, 0);
+    if (future) {
+      const total = shownCategories.reduce((sum, category) => sum + plannedAt(cellKey(category.id, day.date)), 0);
+      return { future, total };
+    }
+    const total = clockHours(
+      doneIntervals.filter((interval) => shownIds.has(interval.categoryId)),
+      day.startMs,
+      day.endMs
+    );
     return { future, total };
   }
 
-  const shownDone = shownCategories.reduce((sum, category) => sum + goalOf(category.id).done, 0);
+  // The Total row's week: real hours for the rows showing (overlapping events count once)
+  const shownDone = clockHours(
+    doneIntervals.filter((interval) => shownIds.has(interval.categoryId)),
+    weekStartMs,
+    weekEndMs
+  );
 
   return (
     <div className="mt-6 grid gap-6 lg:grid-cols-[13rem_minmax(0,1fr)]">
@@ -368,6 +389,14 @@ export default function WeekGrid({
                 Done this week
               </p>
               <p className="mt-1 text-xl font-semibold tabular-nums sm:text-3xl">{formatHours(doneCounted)}</p>
+              {doneNote && (
+                <p
+                  title="The same hours logged under more than one category count once here"
+                  className="mt-0.5 cursor-help text-xs text-stone-400"
+                >
+                  {doneNote}
+                </p>
+              )}
             </div>
             <div>
               <p className="flex items-center gap-1.5 text-xs text-stone-500 sm:text-sm">

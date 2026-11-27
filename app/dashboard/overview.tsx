@@ -4,6 +4,7 @@ import GoalBar from "@/components/goal-bar";
 import GoalStatusLabel from "@/components/goal-status-label";
 import { loadCalendarData } from "@/lib/calendar-data";
 import { directionOf, goalProgress, goalStatus, overLimits } from "@/lib/goals";
+import { clockHours, overlapNote } from "@/lib/clock-time";
 import { formatHours, hoursWithin } from "@/lib/hours";
 import { combinePlans, hoursByDay, sumByCategory } from "@/lib/plan-math";
 import { createClient } from "@/lib/supabase/server";
@@ -73,7 +74,17 @@ export default async function Overview({ userId, timeZone, week }: OverviewProps
       doneByCategory.set(event.category_id, (doneByCategory.get(event.category_id) ?? 0) + hours);
     }
   }
+  // Each category's hours added up (the bar's pieces), and the real hours they cover, with
+  // overlapping events counted once (the total)
   const doneTotal = [...doneByCategory.values()].reduce((sum, h) => sum + h, 0);
+  const doneClock = clockHours(
+    events
+      .filter((event) => event.category_id)
+      .map((event) => ({ startMs: Date.parse(event.start_at), endMs: Date.parse(event.end_at) })),
+    week.start.getTime(),
+    week.end.getTime()
+  );
+  const doneNote = overlapNote(doneTotal, doneClock, formatHours);
 
   // Plan time still ahead this week, counted like the Plan page: each day's plan is the bigger
   // of the hours typed in the grid and the Plan calendar's blocks
@@ -141,11 +152,12 @@ export default async function Overview({ userId, timeZone, week }: OverviewProps
 
   // Today: just today's column of the calendar
   const todayDay = calendar.days.find((day) => day.date === week.today)!;
-  const overlapToday = (startMs: number, endMs: number) =>
-    Math.max(0, Math.min(endMs, todayDay.endMs) - Math.max(startMs, todayDay.startMs)) / 3_600_000;
-  const doneToday = calendar.blocks
-    .filter((block) => block.kind === "tracked")
-    .reduce((sum, block) => sum + overlapToday(block.startMs, block.endMs), 0);
+  // Real hours today, with overlapping events counted once
+  const doneToday = clockHours(
+    calendar.blocks.filter((block) => block.kind === "tracked"),
+    todayDay.startMs,
+    todayDay.endMs
+  );
   // Planned time still ahead today, counted the same way as the week's
   const plannedLeft = Object.entries(plannedAhead)
     .filter(([key]) => key.endsWith(`:${week.today}`))
@@ -159,9 +171,8 @@ export default async function Overview({ userId, timeZone, week }: OverviewProps
   const needsNextWeekGoals = isLateInWeek && (nextGoalsResult.count ?? 0) === 0;
 
   // Trends: this week so far next to the average full week (once there are 2)
-  const weekTotals = (trends?.weeks ?? []).map((_, index) =>
-    trends!.categories.reduce((sum, category) => sum + category.weekHours[index], 0)
-  );
+  // Real hours per week (overlapping events counted once)
+  const weekTotals = (trends?.weeks ?? []).map((week) => week.clockHours);
   // Full weeks: all 7 days in the history, and not this week
   const fullWeekTotals = weekTotals.filter(
     (_, index) => trends!.weeks[index].dayCount === 7 && !trends!.weeks[index].isCurrent
@@ -192,7 +203,13 @@ export default async function Overview({ userId, timeZone, week }: OverviewProps
           </div>
           {/* Like the Plan page: done leaves out time past limits, which shows on its own */}
           <p className="mt-1 text-sm text-stone-500">
-            {formatHours(doneTotal - overTotal)} done
+            {formatHours(Math.max(0, doneClock - overTotal))} done
+            {doneNote && (
+              <>
+                {" "}
+                · <span title="The same hours logged under more than one category count once here">{doneNote}</span>
+              </>
+            )}
             {overTotal > 0 && (
               <>
                 {" "}

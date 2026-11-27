@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { overlapNote } from "@/lib/clock-time";
 import { formatHours } from "@/lib/hours";
 import type { TrendCategory, TrendDay, TrendWeek } from "@/lib/trends";
 import type { WeekPlan } from "@/lib/week-plan";
@@ -130,6 +131,7 @@ function Column({
   title,
   unit,
   planned,
+  clock,
 }: {
   values: number[];
   categories: TrendCategory[];
@@ -138,16 +140,21 @@ function Column({
   unit: "hours" | "minutes";
   // Planned hours per category, stacked on top, faded
   planned?: number[];
+  // The real total (overlaps counted once), when it differs from adding up the categories
+  clock?: number;
 }) {
-  const total = sum(values);
+  const total = clock ?? sum(values);
   const plannedTotal = planned ? sum(planned) : 0;
   const show = (value: number) => (unit === "hours" ? formatHours(value) : `${Math.round(value)} min`);
 
   return (
     <div
-      title={`${title}: ${show(total)}${plannedTotal > 0 ? ` done, ${show(plannedTotal)} planned` : ""}`}
+      title={`${title}: ${show(total)}${plannedTotal > 0 ? ` done, ${show(plannedTotal)} planned` : ""}${
+        clock !== undefined ? ` (${overlapNote(sum(values), clock, formatHours) ?? "no overlaps"})` : ""
+      }`}
       className="flex min-w-0 flex-1 flex-col-reverse gap-px"
-      style={{ height: max > 0 ? `${((total + plannedTotal) / max) * 100}%` : 0 }}
+      // The bar is as tall as the categories' time added up (each keeps full credit)
+      style={{ height: max > 0 ? `${((sum(values) + plannedTotal) / max) * 100}%` : 0 }}
     >
       {values.map((value, index) =>
         value > 0 ? (
@@ -182,6 +189,7 @@ function BarRow({
   total,
   note,
   planned,
+  totalTitle,
 }: {
   label: string;
   values: number[];
@@ -189,6 +197,8 @@ function BarRow({
   max: number;
   total: string;
   note?: string;
+  // Hover text for the total (e.g. "includes 4h counted twice")
+  totalTitle?: string;
   // Planned hours per category, after the done part, faded
   planned?: number[];
 }) {
@@ -221,7 +231,10 @@ function BarRow({
           )}
         </div>
       </div>
-      <span className="text-right text-sm font-medium tabular-nums leading-tight">
+      <span
+        title={totalTitle}
+        className={`text-right text-sm font-medium tabular-nums leading-tight ${totalTitle ? "cursor-help" : ""}`}
+      >
         {total}
         {note && <span className="block text-[11px] font-normal text-stone-400">{note}</span>}
       </span>
@@ -263,11 +276,24 @@ function DaysView({
     return index === -1 ? null : categories.map((category) => plan!.aheadByCategory[category.id]?.[index] ?? 0);
   };
 
-  const totals = days.map((_, index) => sum(categories.map((category) => category.dayHours[index])));
+  // Each day's total in real hours: overlapping events count once. (On a category's own page,
+  // only that category's hours, so the smaller of the two.)
+  const totals = days.map((day, index) =>
+    Math.min(sum(categories.map((category) => category.dayHours[index])), day.clockHours)
+  );
   // Average over finished days (today isn't over yet)
   const finished = totals.filter((_, index) => !days[index].isToday);
   const average = finished.length >= MIN_DAYS_FOR_AVERAGE ? sum(finished) / finished.length : null;
   const heights = columns.map((column) => sum(column.done) + sum(plannedOn(column.date) ?? []));
+  // A day's real total, only when overlaps make it less than the categories added up
+  const columnClock = (date: string) => {
+    const index = days.findIndex((day) => day.date === date);
+    if (index === -1) {
+      return undefined;
+    }
+    const added = sum(categories.map((category) => category.dayHours[index]));
+    return totals[index] < added - 1 / 60 ? totals[index] : undefined;
+  };
   const max = Math.max(...heights, average ?? 0) * 1.08;
 
   // A few date labels under the chart: first, last and two between, with "Today" always among them
@@ -298,6 +324,7 @@ function DaysView({
             title={column.isToday ? `${column.label} (so far)` : column.label}
             unit="hours"
             planned={plannedOn(column.date) ?? undefined}
+            clock={columnClock(column.date)}
           />
         ))}
         {average !== null && (
@@ -327,7 +354,10 @@ function WeeksView({
   categories: TrendCategory[];
   plan: WeekPlan | null;
 }) {
-  const totals = weeks.map((_, index) => sum(categories.map((category) => category.weekHours[index])));
+  // Each week's total in real hours: overlapping events count once (on a category's own page,
+  // just that category's hours)
+  const added = weeks.map((_, index) => sum(categories.map((category) => category.weekHours[index])));
+  const totals = weeks.map((week, index) => Math.min(added[index], week.clockHours));
   // This week's planned time per category, added to its bar
   const plannedThisWeek = plan ? categories.map((category) => sum(plan.aheadByCategory[category.id] ?? [])) : null;
   // Average over full weeks (all 7 days in the period, and not this week)
@@ -335,7 +365,7 @@ function WeeksView({
   const average = full.length >= MIN_WEEKS_FOR_AVERAGE ? sum(full) / full.length : null;
   const max =
     Math.max(
-      ...totals.map((total, index) => total + (weeks[index].isCurrent && plannedThisWeek ? sum(plannedThisWeek) : 0)),
+      ...added.map((total, index) => total + (weeks[index].isCurrent && plannedThisWeek ? sum(plannedThisWeek) : 0)),
       average ?? 0
     ) * 1.05;
 
@@ -351,6 +381,7 @@ function WeeksView({
             categories={categories}
             max={max}
             total={formatHours(totals[index])}
+            totalTitle={overlapNote(added[index], totals[index], formatHours) ?? undefined}
             note={
               week.isCurrent
                 ? plannedThisWeek && sum(plannedThisWeek) > 0

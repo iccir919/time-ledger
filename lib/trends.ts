@@ -2,6 +2,7 @@ import "server-only";
 import { TZDate } from "@date-fns/tz";
 import { addDays, format, startOfYear, subDays } from "date-fns";
 import { createClient } from "@/lib/supabase/server";
+import { clockHours } from "@/lib/clock-time";
 import { hoursWithin } from "@/lib/hours";
 import { getWeek } from "@/lib/week";
 
@@ -28,6 +29,8 @@ export type TrendDay = {
   date: string; // "2026-11-24"
   label: string; // "Nov 24"
   isToday: boolean;
+  // Real hours the day's events cover, with overlaps counted once (the day's total)
+  clockHours: number;
 };
 
 export type TrendWeek = {
@@ -36,6 +39,8 @@ export type TrendWeek = {
   // How many of its days are in the period (the first week can be partial)
   dayCount: number;
   isCurrent: boolean;
+  // Real hours the week's events cover, with overlaps counted once (the week's total)
+  clockHours: number;
 };
 
 export type TrendCategory = {
@@ -232,6 +237,13 @@ export async function loadTrends(timeZone: string, requestedRange?: string): Pro
     titleHoursById.set(id, titleHours);
   }
 
+  // Each day's total in real hours: an hour two events share counts once
+  const intervals = events.map((event) => ({
+    startMs: Date.parse(event.start_at),
+    endMs: Math.min(Date.parse(event.end_at), now),
+  }));
+  const dayClock = days.map((day) => clockHours(intervals, day.start.getTime(), day.end.getTime()));
+
   // The period's weeks (Monday first); the first and the current one can be partial
   const weekLabel = new Intl.DateTimeFormat("en-US", { timeZone, month: "short", day: "numeric" });
   const currentWeekStart = getWeek(timeZone).weekStart;
@@ -245,9 +257,11 @@ export async function loadTrends(timeZone: string, requestedRange?: string): Pro
         label: weekStart === currentWeekStart ? "This week" : weekLabel.format(startOfDate(weekStart, timeZone)),
         dayCount: 0,
         isCurrent: weekStart === currentWeekStart,
+        clockHours: 0,
       });
     }
     weeks[weeks.length - 1].dayCount++;
+    weeks[weeks.length - 1].clockHours += dayClock[weekIndexOfDay.length];
     weekIndexOfDay.push(weeks.length - 1);
   }
 
@@ -322,7 +336,12 @@ export async function loadTrends(timeZone: string, requestedRange?: string): Pro
     ranges,
     range,
     periodLabel: `${dayLabel.format(days[0].start)} to ${dayLabel.format(days[days.length - 1].start)}`,
-    days: days.map((day) => ({ date: day.date, label: dayLabel.format(day.start), isToday: day.date === today })),
+    days: days.map((day, index) => ({
+      date: day.date,
+      label: dayLabel.format(day.start),
+      isToday: day.date === today,
+      clockHours: dayClock[index],
+    })),
     weeks,
     categories,
   };
