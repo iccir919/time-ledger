@@ -4,8 +4,10 @@ import ReconnectGoogle from "@/components/reconnect-google";
 import { createClient } from "@/lib/supabase/server";
 import { syncRecentWeeks, type SyncResult } from "@/lib/sync-events";
 import { loadTrends } from "@/lib/trends";
+import { loadWeekPlan } from "@/lib/week-plan";
 import CategoriesTable from "./categories-table";
 import PatternsCard from "./patterns-card";
+import PlannedToggle from "./planned-toggle";
 import RangePicker from "./range-picker";
 
 type TrendsPageProps = {
@@ -32,7 +34,11 @@ export default async function TrendsPage({ searchParams }: TrendsPageProps) {
   }
 
   const { range } = await searchParams;
-  const trends = sync?.status === "ok" ? await loadTrends(sync.timeZone, range) : null;
+  // The range's history, and this week's done and planned time (for "Done + planned")
+  const [trends, plan] =
+    sync?.status === "ok"
+      ? await Promise.all([loadTrends(sync.timeZone, range), loadWeekPlan(user.id, sync.timeZone)])
+      : [null, null];
 
   return (
     <div className="min-h-screen">
@@ -44,7 +50,12 @@ export default async function TrendsPage({ searchParams }: TrendsPageProps) {
             <h1 className="text-2xl font-semibold tracking-tight">Trends</h1>
             <p className="mt-2 text-stone-600">Where your time goes, and when.</p>
           </div>
-          {trends && <RangePicker ranges={trends.ranges} current={trends.range} basePath="/trends" />}
+          {trends && (
+            <div className="flex flex-wrap gap-2">
+              <PlannedToggle />
+              <RangePicker ranges={trends.ranges} current={trends.range} basePath="/trends" />
+            </div>
+          )}
         </div>
 
         {sync === null && (
@@ -61,15 +72,16 @@ export default async function TrendsPage({ searchParams }: TrendsPageProps) {
           </p>
         )}
 
-        {trends && trends.categories.length > 0 && (
+        {trends && plan && trends.categories.length > 0 && (
           <>
             <PatternsCard
               periodLabel={trends.periodLabel}
               days={trends.days}
               weeks={trends.weeks}
               categories={trends.categories}
+              plan={plan}
             />
-            <CategoriesTable categories={trends.categories} range={trends.range} />
+            <CategoriesTable categories={trends.categories} range={trends.range} plan={plan} />
           </>
         )}
       </main>

@@ -3,6 +3,8 @@
 import { useState } from "react";
 import { formatHours } from "@/lib/hours";
 import type { TrendCategory, TrendDay, TrendWeek } from "@/lib/trends";
+import type { WeekPlan } from "@/lib/week-plan";
+import { useShowPlanned } from "./use-show-planned";
 
 type View = "days" | "weeks" | "weekdays" | "hours";
 
@@ -26,14 +28,26 @@ type PatternsCardProps = {
   days: TrendDay[];
   weeks: TrendWeek[];
   categories: TrendCategory[];
+  // This week's planned time, for "Done + planned". Left out where there's no toggle.
+  plan?: WeekPlan;
 };
 
 const sum = (values: number[]) => values.reduce((total, value) => total + value, 0);
 
+// "2026-11-27" -> "Nov 27" (noon UTC keeps the date on its own day)
+const shortDate = new Intl.DateTimeFormat("en-US", { month: "short", day: "numeric", timeZone: "UTC" });
+const labelOf = (date: string) => shortDate.format(new Date(`${date}T12:00:00Z`));
+
+// Planned hours: faded, with a dashed edge, like plans in the calendar
+const plannedStyle = (color: string) => ({ backgroundColor: `${color}55`, border: `1px dashed ${color}` });
+
 // One card, four ways to look at the same time: each day, each week, the average weekday,
 // and the average day hour by hour. Every view is stacked by category color.
-export default function PatternsCard({ periodLabel, days, weeks, categories }: PatternsCardProps) {
+// With "Done + planned" on, Days and Weeks add this week's planned time, faded.
+export default function PatternsCard({ periodLabel, days, weeks, categories, plan }: PatternsCardProps) {
   const [view, setView] = useState<View>("days");
+  const { showPlanned } = useShowPlanned();
+  const planned = showPlanned && plan ? plan : null;
 
   const subtitles: Record<View, string> = {
     days: `Hours each day, ${periodLabel}`,
@@ -57,9 +71,11 @@ export default function PatternsCard({ periodLabel, days, weeks, categories }: P
               role="tab"
               aria-selected={view === option.key}
               onClick={() => setView(option.key)}
+              // Planned time only changes Days and Weeks, so the others dim while it's on
+              title={planned && (option.key === "weekdays" || option.key === "hours") ? "Shows done time only" : undefined}
               className={`rounded-full px-3 py-1 text-sm transition-colors ${
                 view === option.key ? "bg-white font-medium text-stone-900 shadow-sm" : "text-stone-500 hover:text-stone-800"
-              }`}
+              } ${planned && (option.key === "weekdays" || option.key === "hours") ? "opacity-50" : ""}`}
             >
               {option.label}
             </button>
@@ -67,7 +83,7 @@ export default function PatternsCard({ periodLabel, days, weeks, categories }: P
         </div>
       </div>
 
-      {categories.length > 1 && (
+      {(categories.length > 1 || planned) && (
         <div className="mt-4 flex flex-wrap gap-x-4 gap-y-1 text-xs text-stone-600">
           {categories.map((category) => (
             <span key={category.id} className="flex items-center gap-1.5">
@@ -75,12 +91,18 @@ export default function PatternsCard({ periodLabel, days, weeks, categories }: P
               {category.name}
             </span>
           ))}
+          {planned && (
+            <span className="flex items-center gap-1.5">
+              <span className="size-2.5 rounded-sm" style={plannedStyle("#78716c")} />
+              Planned
+            </span>
+          )}
         </div>
       )}
 
       <div className="mt-5">
-        {view === "days" && <DaysView days={days} categories={categories} />}
-        {view === "weeks" && <WeeksView weeks={weeks} categories={categories} />}
+        {view === "days" && <DaysView days={days} categories={categories} plan={planned} />}
+        {view === "weeks" && <WeeksView weeks={weeks} categories={categories} plan={planned} />}
         {view === "weekdays" && <WeekdaysView categories={categories} />}
         {view === "hours" && <HoursView categories={categories} />}
       </div>
@@ -108,6 +130,7 @@ function Column({
   title,
   faded,
   unit,
+  planned,
 }: {
   values: number[];
   categories: TrendCategory[];
@@ -115,15 +138,18 @@ function Column({
   title: string;
   faded?: boolean;
   unit: "hours" | "minutes";
+  // Planned hours per category, stacked on top, faded
+  planned?: number[];
 }) {
   const total = sum(values);
+  const plannedTotal = planned ? sum(planned) : 0;
   const show = (value: number) => (unit === "hours" ? formatHours(value) : `${Math.round(value)} min`);
 
   return (
     <div
-      title={`${title}: ${show(total)}`}
+      title={`${title}: ${show(total)}${plannedTotal > 0 ? ` done, ${show(plannedTotal)} planned` : ""}`}
       className={`flex min-w-0 flex-1 flex-col-reverse gap-px ${faded ? "opacity-50" : ""}`}
-      style={{ height: max > 0 ? `${(total / max) * 100}%` : 0 }}
+      style={{ height: max > 0 ? `${((total + plannedTotal) / max) * 100}%` : 0 }}
     >
       {values.map((value, index) =>
         value > 0 ? (
@@ -132,6 +158,16 @@ function Column({
             title={`${title} · ${categories[index].name}: ${show(value)}`}
             className="last:rounded-t-sm"
             style={{ flexGrow: value, backgroundColor: categories[index].color }}
+          />
+        ) : null
+      )}
+      {planned?.map((value, index) =>
+        value > 0 ? (
+          <span
+            key={`planned-${categories[index].id}`}
+            title={`${title} · ${categories[index].name}: ${show(value)} planned`}
+            className="last:rounded-t-sm"
+            style={{ flexGrow: value, ...plannedStyle(categories[index].color) }}
           />
         ) : null
       )}
@@ -147,6 +183,7 @@ function BarRow({
   max,
   total,
   note,
+  planned,
 }: {
   label: string;
   values: number[];
@@ -154,8 +191,10 @@ function BarRow({
   max: number;
   total: string;
   note?: string;
+  // Planned hours per category, after the done part, faded
+  planned?: number[];
 }) {
-  const rowTotal = sum(values);
+  const rowTotal = sum(values) + (planned ? sum(planned) : 0);
   return (
     <div className="grid grid-cols-[5.5rem_1fr_4.5rem] items-center gap-3 py-1.5">
       <span className="truncate text-sm text-stone-700">{label}</span>
@@ -173,6 +212,15 @@ function BarRow({
               />
             ) : null
           )}
+          {planned?.map((value, index) =>
+            value > 0 ? (
+              <span
+                key={`planned-${categories[index].id}`}
+                title={`${label} · ${categories[index].name}: ${formatHours(value)} planned`}
+                style={{ flexGrow: value, ...plannedStyle(categories[index].color) }}
+              />
+            ) : null
+          )}
         </div>
       </div>
       <span className="text-right text-sm font-medium tabular-nums leading-tight">
@@ -183,32 +231,70 @@ function BarRow({
   );
 }
 
-function DaysView({ days, categories }: { days: TrendDay[]; categories: TrendCategory[] }) {
+function DaysView({
+  days,
+  categories,
+  plan,
+}: {
+  days: TrendDay[];
+  categories: TrendCategory[];
+  plan: WeekPlan | null;
+}) {
+  // With planned on, the chart runs to the end of this week: today and the days after it
+  // carry their plans on top
+  const lastDate = days[days.length - 1].date;
+  const extraDates = plan ? plan.dates.filter((date) => date > lastDate) : [];
+  const columns = [
+    ...days.map((day, index) => ({
+      key: day.date,
+      date: day.date,
+      label: day.isToday ? "Today" : day.label,
+      isToday: day.isToday,
+      done: categories.map((category) => category.dayHours[index]),
+    })),
+    ...extraDates.map((date) => ({
+      key: date,
+      date,
+      label: labelOf(date),
+      isToday: false,
+      done: categories.map(() => 0),
+    })),
+  ];
+  const plannedOn = (date: string) => {
+    const index = plan ? plan.dates.indexOf(date) : -1;
+    return index === -1 ? null : categories.map((category) => plan!.aheadByCategory[category.id]?.[index] ?? 0);
+  };
+
   const totals = days.map((_, index) => sum(categories.map((category) => category.dayHours[index])));
   // Average over finished days (today isn't over yet)
   const finished = totals.filter((_, index) => !days[index].isToday);
   const average = finished.length >= MIN_DAYS_FOR_AVERAGE ? sum(finished) / finished.length : null;
-  const max = Math.max(...totals, average ?? 0) * 1.08;
+  const heights = columns.map((column) => sum(column.done) + sum(plannedOn(column.date) ?? []));
+  const max = Math.max(...heights, average ?? 0) * 1.08;
 
   // A few date labels under the chart: first, last and two between
-  const labelIndexes = [...new Set([0, Math.round((days.length - 1) / 3), Math.round(((days.length - 1) * 2) / 3), days.length - 1])];
+  const labelIndexes = [
+    ...new Set([0, Math.round((columns.length - 1) / 3), Math.round(((columns.length - 1) * 2) / 3), columns.length - 1]),
+  ];
 
   return (
     <>
       <AverageNote label="Average day" hours={average} waiting="The average line shows after a full week." />
       <div
-        className={`relative flex items-end ${days.length > 60 ? "gap-px" : "gap-1"}`}
+        className={`relative flex items-end ${columns.length > 60 ? "gap-px" : "gap-1"}`}
         style={{ height: CHART_HEIGHT }}
       >
-        {days.map((day, index) => (
+        {columns.map((column) => (
           <Column
-            key={day.date}
-            values={categories.map((category) => category.dayHours[index])}
+            key={column.key}
+            values={column.done}
             categories={categories}
             max={max}
-            title={day.isToday ? `${day.label} (today, so far)` : day.label}
-            faded={day.isToday}
+            title={column.isToday ? `${column.label} (so far)` : column.label}
+            // Today is faded while it's "so far"; with plans showing, the plans are what's faded
+            faded={column.isToday && !plan}
             unit="hours"
+            planned={plannedOn(column.date) ?? undefined}
           />
         ))}
         {average !== null && (
@@ -220,19 +306,33 @@ function DaysView({ days, categories }: { days: TrendDay[]; categories: TrendCat
       </div>
       <div className="mt-2 flex justify-between text-xs text-stone-400">
         {labelIndexes.map((index) => (
-          <span key={index}>{days[index].isToday ? "Today" : days[index].label}</span>
+          <span key={index}>{columns[index].label}</span>
         ))}
       </div>
     </>
   );
 }
 
-function WeeksView({ weeks, categories }: { weeks: TrendWeek[]; categories: TrendCategory[] }) {
+function WeeksView({
+  weeks,
+  categories,
+  plan,
+}: {
+  weeks: TrendWeek[];
+  categories: TrendCategory[];
+  plan: WeekPlan | null;
+}) {
   const totals = weeks.map((_, index) => sum(categories.map((category) => category.weekHours[index])));
+  // This week's planned time per category, added to its bar
+  const plannedThisWeek = plan ? categories.map((category) => sum(plan.aheadByCategory[category.id] ?? [])) : null;
   // Average over full weeks (all 7 days in the period, and not this week)
   const full = totals.filter((_, index) => weeks[index].dayCount === 7 && !weeks[index].isCurrent);
   const average = full.length >= MIN_WEEKS_FOR_AVERAGE ? sum(full) / full.length : null;
-  const max = Math.max(...totals, average ?? 0) * 1.05;
+  const max =
+    Math.max(
+      ...totals.map((total, index) => total + (weeks[index].isCurrent && plannedThisWeek ? sum(plannedThisWeek) : 0)),
+      average ?? 0
+    ) * 1.05;
 
   return (
     <>
@@ -246,7 +346,16 @@ function WeeksView({ weeks, categories }: { weeks: TrendWeek[]; categories: Tren
             categories={categories}
             max={max}
             total={formatHours(totals[index])}
-            note={week.isCurrent ? "so far" : week.dayCount < 7 ? `${week.dayCount} days` : undefined}
+            note={
+              week.isCurrent
+                ? plannedThisWeek && sum(plannedThisWeek) > 0
+                  ? `+${formatHours(sum(plannedThisWeek))} planned`
+                  : "so far"
+                : week.dayCount < 7
+                  ? `${week.dayCount} days`
+                  : undefined
+            }
+            planned={week.isCurrent && plannedThisWeek ? plannedThisWeek : undefined}
           />
         ))}
         {/* The average, as a dashed line down the bars (the bar area starts after the 5.5rem label and a gap, and ends before the 4.5rem total) */}
