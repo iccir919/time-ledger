@@ -81,8 +81,7 @@ async function syncOnce(userId: string, forceRefresh: boolean): Promise<SyncOutc
     return id && categoryIds.has(id) ? id : null;
   };
 
-  async function syncCalendar(calendar: (typeof calendarsResult.data)[number]) {
-    // The Monday of the week tracking started, in the user's time zone
+  async function syncCalendar(calendar: NonNullable<typeof calendarsResult.data>[number]) {    // The Monday of the week tracking started, in the user's time zone
     const trackingStart = startOfWeek(new TZDate(Date.parse(calendar.created_at), timeZone), { weekStartsOn: 1 });
     const from = trackingStart > lastWeekStart ? trackingStart : lastWeekStart;
     let changed = false;
