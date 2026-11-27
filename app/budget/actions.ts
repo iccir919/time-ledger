@@ -3,7 +3,7 @@
 import { addDays, format, parseISO } from "date-fns";
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
-import { syncCalendars } from "@/lib/sync-events";
+import { syncCalendars, syncPlanBlocks } from "@/lib/sync-events";
 import type { GoalDirection } from "@/lib/goals";
 import {
   deleteGoogleEvent,
@@ -256,9 +256,11 @@ export async function saveBlock(formData: FormData): Promise<BlockResult> {
     throw error;
   }
 
-  // Logged time counts right away: bring the Log calendar's new event in now
+  // Bring the change in now: logged time counts right away, and plans show right away
   if (kind === "done") {
     await syncAfterLogging(target.userId);
+  } else {
+    await syncPlanBlocks(target.userId);
   }
 
   revalidatePath("/budget");
@@ -306,8 +308,11 @@ export async function deleteBlock(blockId: string, kind: BlockKind): Promise<Blo
     }
   }
 
+  // Bring the change in now, so it shows on the next render
   if (kind === "done") {
     await syncAfterLogging(target.userId);
+  } else {
+    await syncPlanBlocks(target.userId);
   }
 
   revalidatePath("/budget");

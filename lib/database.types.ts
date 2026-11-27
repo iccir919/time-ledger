@@ -117,6 +117,20 @@ isOneToOne: false
                   Relationships: [
                     
                   ]
+                },"plan_blocks": {
+                  Row: {
+                    "end_at": string,"google_event_id": string,"id": string,"start_at": string,"title": string,"user_id": string
+                  }
+                  ComputedFields: never
+                  Insert: {
+                    "end_at": string,"google_event_id": string,"id"?: string,"start_at": string,"title": string,"user_id"?: string
+                  }
+                  Update: {
+                    "end_at"?: string,"google_event_id"?: string,"id"?: string,"start_at"?: string,"title"?: string,"user_id"?: string
+                  }
+                  Relationships: [
+                    
+                  ]
                 },"tracked_calendars": {
                   Row: {
                     "created_at": string,"default_category_id": string | null,"google_calendar_id": string,"id": string,"name": string,"user_id": string
@@ -139,14 +153,14 @@ isOneToOne: false
                   ]
                 },"user_settings": {
                   Row: {
-                    "last_synced_at": string | null,"log_calendar_id": string | null,"plan_calendar_id": string | null,"time_zone": string | null,"updated_at": string,"user_id": string
+                    "last_synced_at": string | null,"log_calendar_id": string | null,"plan_calendar_id": string | null,"plan_calendar_missing": boolean,"plan_synced_from": string | null,"plan_synced_until": string | null,"time_zone": string | null,"updated_at": string,"user_id": string
                   }
                   ComputedFields: never
                   Insert: {
-                    "last_synced_at"?: string | null,"log_calendar_id"?: string | null,"plan_calendar_id"?: string | null,"time_zone"?: string | null,"updated_at"?: string,"user_id"?: string
+                    "last_synced_at"?: string | null,"log_calendar_id"?: string | null,"plan_calendar_id"?: string | null,"plan_calendar_missing"?: boolean,"plan_synced_from"?: string | null,"plan_synced_until"?: string | null,"time_zone"?: string | null,"updated_at"?: string,"user_id"?: string
                   }
                   Update: {
-                    "last_synced_at"?: string | null,"log_calendar_id"?: string | null,"plan_calendar_id"?: string | null,"time_zone"?: string | null,"updated_at"?: string,"user_id"?: string
+                    "last_synced_at"?: string | null,"log_calendar_id"?: string | null,"plan_calendar_id"?: string | null,"plan_calendar_missing"?: boolean,"plan_synced_from"?: string | null,"plan_synced_until"?: string | null,"time_zone"?: string | null,"updated_at"?: string,"user_id"?: string
                   }
                   Relationships: [
                     

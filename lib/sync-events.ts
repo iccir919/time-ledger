@@ -1,6 +1,6 @@
 import "server-only";
 import { TZDate } from "@date-fns/tz";
-import { startOfWeek, subWeeks } from "date-fns";
+import { addWeeks, startOfMonth, startOfWeek, subWeeks } from "date-fns";
 import { createClient } from "@/lib/supabase/server";
 import {
   getGoogleAccessToken,
@@ -176,7 +176,10 @@ async function syncOnce(userId: string, forceRefresh: boolean): Promise<SyncOutc
     return changed;
   }
 
-  const results = await Promise.all(calendarsResult.data.map(syncCalendar));
+  const results = await Promise.all([
+    ...calendarsResult.data.map(syncCalendar),
+    syncPlanCalendar(accessToken, timeZone, userId),
+  ]);
 
   // Remember the time zone (so pages don't ask Google) and when this sync happened
   const syncedAt = new Date().toISOString();
@@ -188,6 +191,128 @@ async function syncOnce(userId: string, forceRefresh: boolean): Promise<SyncOutc
   }
 
   return { status: "ok", timeZone, changed: results.some(Boolean), syncedAt };
+}
+
+// How far ahead plan blocks are stored. Weeks past this are read from Google directly.
+const PLAN_WEEKS_AHEAD = 26;
+
+// The Plan calendar's blocks, stored so pages don't ask Google: from the start of the earliest
+// week the Plan page can show (the month view of last week's month) to 26 weeks ahead.
+// Returns whether anything changed.
+async function syncPlanCalendar(accessToken: string, timeZone: string, userId: string) {
+  const supabase = await createClient();
+  const { data: settings, error: settingsError } = await supabase
+    .from("user_settings")
+    .select("plan_calendar_id, plan_calendar_missing")
+    .maybeSingle();
+  if (settingsError) {
+    throw new Error(settingsError.message);
+  }
+  const planCalendarId = settings?.plan_calendar_id;
+  if (!planCalendarId) {
+    return false;
+  }
+
+  const thisWeek = startOfWeek(TZDate.tz(timeZone), { weekStartsOn: 1 });
+  const from = startOfWeek(startOfMonth(subWeeks(thisWeek, 1)), { weekStartsOn: 1 });
+  const until = addWeeks(thisWeek, PLAN_WEEKS_AHEAD);
+
+  let googleEvents: GoogleEvent[];
+  try {
+    googleEvents = await listGoogleEvents(accessToken, planCalendarId, from, until);
+  } catch (error) {
+    // 404 or 410: the Plan calendar was deleted in Google. Remember that, and drop its blocks.
+    if (error instanceof GoogleApiError && (error.status === 404 || error.status === 410)) {
+      if (settings.plan_calendar_missing) {
+        return false;
+      }
+      await supabase.from("plan_blocks").delete().eq("user_id", userId);
+      await supabase
+        .from("user_settings")
+        .update({ plan_calendar_missing: true, plan_synced_from: null, plan_synced_until: null })
+        .eq("user_id", userId);
+      return true;
+    }
+    throw error;
+  }
+
+  // Only timed blocks count; skip all-day and cancelled events
+  const rows = googleEvents
+    .filter((event) => event.status !== "cancelled" && event.start.dateTime && event.end.dateTime)
+    .map((event) => ({
+      user_id: userId,
+      google_event_id: event.id,
+      title: (event.summary ?? "").trim() || "(No title)",
+      start_at: event.start.dateTime!,
+      end_at: event.end.dateTime!,
+    }));
+
+  const { data: saved, error: savedError } = await supabase
+    .from("plan_blocks")
+    .select("id, google_event_id, title, start_at, end_at");
+  if (savedError) {
+    throw new Error(savedError.message);
+  }
+  const savedByGoogleId = new Map(saved.map((block) => [block.google_event_id, block]));
+  let changed = false;
+
+  const changedRows = rows.filter((row) => {
+    const before = savedByGoogleId.get(row.google_event_id);
+    return (
+      !before ||
+      before.title !== row.title ||
+      Date.parse(before.start_at) !== Date.parse(row.start_at) ||
+      Date.parse(before.end_at) !== Date.parse(row.end_at)
+    );
+  });
+  if (changedRows.length > 0) {
+    const { error } = await supabase.from("plan_blocks").upsert(changedRows, { onConflict: "user_id,google_event_id" });
+    if (error) {
+      throw new Error(error.message);
+    }
+    changed = true;
+  }
+
+  // Remove blocks deleted in Google, and any from outside the window
+  const googleIds = new Set(rows.map((row) => row.google_event_id));
+  const idsToRemove = saved.filter((block) => !googleIds.has(block.google_event_id)).map((block) => block.id);
+  if (idsToRemove.length > 0) {
+    const { error } = await supabase.from("plan_blocks").delete().in("id", idsToRemove);
+    if (error) {
+      throw new Error(error.message);
+    }
+    changed = true;
+  }
+
+  const { error: windowError } = await supabase
+    .from("user_settings")
+    .update({
+      plan_synced_from: from.toISOString(),
+      plan_synced_until: until.toISOString(),
+      plan_calendar_missing: false,
+    })
+    .eq("user_id", userId);
+  if (windowError) {
+    throw new Error(windowError.message);
+  }
+
+  return changed || Boolean(settings.plan_calendar_missing);
+}
+
+// Sync just the Plan calendar, right after a block is saved or deleted, or the Plan calendar
+// changes. Never throws: the header's next sync catches up.
+export async function syncPlanBlocks(userId: string) {
+  try {
+    const supabase = await createClient();
+    const { data: settings } = await supabase.from("user_settings").select("time_zone").maybeSingle();
+    const accessToken = await getGoogleAccessToken(userId);
+    if (!accessToken || !settings?.time_zone) {
+      return;
+    }
+    await syncPlanCalendar(accessToken, settings.time_zone, userId);
+  } catch (error) {
+    console.error("Syncing the Plan calendar failed:", error);
+  }
 }
 
 // Sync, unless the last one was moments ago (force skips that check). If Google rejects

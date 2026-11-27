@@ -3,7 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
-import { syncSoon } from "@/lib/sync-events";
+import { syncPlanBlocks, syncSoon } from "@/lib/sync-events";
 import {
   createGoogleCalendar,
   getGoogleTimeZone,
@@ -159,13 +159,23 @@ export async function createPlanCalendar(formData: FormData) {
   const { error: saveError } = await supabase
     .from("user_settings")
     .upsert(
-      { plan_calendar_id: calendarId, updated_at: new Date().toISOString() },
+      {
+        plan_calendar_id: calendarId,
+        // A new Plan calendar: its blocks get stored fresh by the sync below
+        plan_synced_from: null,
+        plan_synced_until: null,
+        plan_calendar_missing: false,
+        updated_at: new Date().toISOString(),
+      },
       { onConflict: "user_id" }
     );
 
   if (saveError) {
     throw new Error(saveError.message);
   }
+
+  await supabase.from("plan_blocks").delete().eq("user_id", user.id);
+  await syncPlanBlocks(user.id);
 
   revalidatePath("/calendars");
   revalidatePath("/budget");
@@ -220,11 +230,23 @@ export async function deletePlanCalendar() {
 
   const { error: clearError } = await supabase
     .from("user_settings")
-    .update({ plan_calendar_id: null, updated_at: new Date().toISOString() })
+    .update({
+      plan_calendar_id: null,
+      plan_synced_from: null,
+      plan_synced_until: null,
+      plan_calendar_missing: false,
+      updated_at: new Date().toISOString(),
+    })
     .eq("user_id", user.id);
 
   if (clearError) {
     throw new Error(clearError.message);
+  }
+
+  // Its stored blocks go too
+  const { error: blocksError } = await supabase.from("plan_blocks").delete().eq("user_id", user.id);
+  if (blocksError) {
+    throw new Error(blocksError.message);
   }
 
   revalidatePath("/calendars");

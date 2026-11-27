@@ -1,5 +1,6 @@
 import "server-only";
 import { GoogleApiError, listGoogleEvents, withGoogleAccessToken } from "@/lib/google";
+import { createClient } from "@/lib/supabase/server";
 
 export type PlanBlock = {
   id: string;
@@ -16,9 +17,69 @@ export type PlanBlocksResult = {
   missing: boolean;
 };
 
-// The timed blocks on the user's Plan calendar between two times (a week or a month). Never throws,
-// so pages can show a notice instead of an error screen.
+// The timed blocks on the user's Plan calendar between two times (a week or a month).
+// The sync stores the blocks for a stretch of weeks; inside it they come from the database,
+// outside it (far ahead) straight from Google. Never throws, so pages can show a notice
+// instead of an error screen.
 export async function loadPlanBlocks(
+  userId: string,
+  planCalendarId: string,
+  range: { start: Date; end: Date }
+): Promise<PlanBlocksResult> {
+  const stored = await loadStoredPlanBlocks(planCalendarId, range);
+  if (stored) {
+    return stored;
+  }
+  return loadPlanBlocksFromGoogle(userId, planCalendarId, range);
+}
+
+// From the database, or null when the stored blocks don't cover this range
+async function loadStoredPlanBlocks(
+  planCalendarId: string,
+  range: { start: Date; end: Date }
+): Promise<PlanBlocksResult | null> {
+  const supabase = await createClient();
+  const { data: settings, error } = await supabase
+    .from("user_settings")
+    .select("plan_calendar_id, plan_synced_from, plan_synced_until, plan_calendar_missing")
+    .maybeSingle();
+  if (error || !settings || settings.plan_calendar_id !== planCalendarId) {
+    return null;
+  }
+  if (settings.plan_calendar_missing) {
+    return { blocks: [], problem: false, missing: true };
+  }
+  const covered =
+    settings.plan_synced_from &&
+    settings.plan_synced_until &&
+    Date.parse(settings.plan_synced_from) <= range.start.getTime() &&
+    Date.parse(settings.plan_synced_until) >= range.end.getTime();
+  if (!covered) {
+    return null;
+  }
+
+  const { data, error: blocksError } = await supabase
+    .from("plan_blocks")
+    .select("google_event_id, title, start_at, end_at")
+    .lt("start_at", range.end.toISOString())
+    .gt("end_at", range.start.toISOString())
+    .order("start_at");
+  if (blocksError) {
+    return null;
+  }
+  return {
+    blocks: data.map((block) => ({
+      id: block.google_event_id,
+      title: block.title,
+      startAt: block.start_at,
+      endAt: block.end_at,
+    })),
+    problem: false,
+    missing: false,
+  };
+}
+
+async function loadPlanBlocksFromGoogle(
   userId: string,
   planCalendarId: string,
   range: { start: Date; end: Date }
