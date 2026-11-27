@@ -2,6 +2,7 @@ import Link from "next/link";
 import { loadCalendarData } from "@/lib/calendar-data";
 import { PLAN_CALENDAR_NAME } from "@/lib/plan-calendar";
 import { focusDays, type MonthGrid, type Week } from "@/lib/week";
+import { loadWeekGoals } from "@/lib/week-goals";
 import MonthCalendar from "./month-calendar";
 import WeekCalendar from "./week-calendar";
 
@@ -16,7 +17,16 @@ type CalendarViewProps = {
 // Plan → Calendar: the whole week, with plan blocks and tracked events side by side,
 // or a month of days with chips. A sidebar adds time and chooses which categories show.
 export default async function CalendarView({ userId, timeZone, week, month }: CalendarViewProps) {
-  const data = await loadCalendarData(userId, timeZone, month ?? week);
+  // The sidebar's goals are for the week shown (in Month view, the week the page is on: this week by default)
+  const [data, weekGoals] = await Promise.all([
+    loadCalendarData(userId, timeZone, month ?? week),
+    loadWeekGoals(userId, timeZone, week),
+  ]);
+  const goals = {
+    goals: weekGoals,
+    weekStart: week.weekStart,
+    weekStillOpen: week.days[week.days.length - 1].date >= week.today,
+  };
 
   return (
     <>
@@ -57,6 +67,7 @@ export default async function CalendarView({ userId, timeZone, week, month }: Ca
           canLog={data.hasLogCalendar}
           groups={data.groups}
           timeZone={timeZone}
+          goals={goals}
         />
       ) : (
         <WeekCalendar
@@ -70,6 +81,7 @@ export default async function CalendarView({ userId, timeZone, week, month }: Ca
           groups={data.groups}
           timeZone={timeZone}
           withSidebar
+          goals={goals}
         />
       )}
     </>

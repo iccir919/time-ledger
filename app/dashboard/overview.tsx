@@ -260,7 +260,7 @@ export default async function Overview({ userId, timeZone, week }: OverviewProps
         <section className="rounded-xl border border-stone-200 bg-white p-5">
           <div className="flex items-baseline justify-between gap-4">
             <h2 className="font-semibold">Today</h2>
-            <Link href="/budget" className="text-sm font-medium text-accent hover:underline">
+            <Link href="/budget?view=calendar" className="text-sm font-medium text-accent hover:underline">
               Whole week
             </Link>
           </div>
@@ -280,7 +280,7 @@ export default async function Overview({ userId, timeZone, week }: OverviewProps
             groups={calendar.groups}
             timeZone={timeZone}
             scrollHeight={TODAY_CALENDAR_HEIGHT}
-            headerHref="/budget"
+            headerHref="/budget?view=calendar"
           />
           <p className="mt-2 text-xs text-stone-400">
             Plan on the left, tracked on the right.

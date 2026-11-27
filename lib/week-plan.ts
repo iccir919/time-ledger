@@ -2,7 +2,7 @@ import "server-only";
 import { createClient } from "@/lib/supabase/server";
 import { loadPlanBlocks, nameKey } from "@/lib/plan-blocks";
 import { combinePlans, hoursByDay } from "@/lib/plan-math";
-import { getWeek } from "@/lib/week";
+import { getWeek, type Week } from "@/lib/week";
 
 export type WeekPlan = {
   // This week's days, Monday first, and today
@@ -14,12 +14,16 @@ export type WeekPlan = {
   doneByCategory: Record<string, number>;
 };
 
-// This week's done and still-planned time per category, counted like the Plan page
+// A week's done and still-planned time per category, counted like the Plan page
 // (each day's plan is the bigger of typed hours and Plan calendar blocks).
-// For Trends' "Done + planned".
-export async function loadWeekPlan(userId: string, timeZone: string): Promise<WeekPlan> {
+// For Trends' "Done + planned" (this week, done so far) and the Plan page's goals
+// (any week, every tracked event counted, like the grid's cells).
+export async function loadWeekPlan(
+  userId: string,
+  timeZone: string,
+  { week = getWeek(timeZone), doneUntilNow = true }: { week?: Week; doneUntilNow?: boolean } = {}
+): Promise<WeekPlan> {
   const supabase = await createClient();
-  const week = getWeek(timeZone);
   const now = Date.now();
 
   const [groupsResult, eventsResult, dayPlansResult, settingsResult] = await Promise.all([
@@ -46,13 +50,13 @@ export async function loadWeekPlan(userId: string, timeZone: string): Promise<We
   const categories = (groupsResult.data ?? []).flatMap((group) => group.categories);
   const categoryIdByName = new Map(categories.map((category) => [nameKey(category.name), category.id]));
 
-  // Done so far (nothing after now counts)
+  // Done time; for Trends, only what's happened so far
   const nowIso = new Date(now).toISOString();
   const actual = hoursByDay(
     (eventsResult.data ?? []).map((event) => ({
       categoryId: event.category_id,
       startAt: event.start_at,
-      endAt: event.end_at < nowIso ? event.end_at : nowIso,
+      endAt: doneUntilNow && event.end_at > nowIso ? nowIso : event.end_at,
     })),
     week.days,
     now

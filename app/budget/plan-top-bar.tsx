@@ -17,21 +17,19 @@ const squareButton =
   "flex size-8 items-center justify-center rounded-full text-lg leading-none text-stone-500 transition-colors hover:bg-stone-200/70 hover:text-stone-900";
 const disabledSquareButton = "flex size-8 items-center justify-center text-lg leading-none text-stone-300";
 
-// Where a link goes. Calendar and Week are the defaults, so they have no ?view= or ?range=.
+// Where a link goes. The view is always spelled out, since a bare /budget opens the view
+// used last. Week is the default range, so it has no ?range=.
 // date is a week's start (any day in it works) or, for a month, "2026-11". Leave it out for now.
 function planHref({ view, range = "week", date }: { view: PlanView; range?: CalendarRange; date?: string }) {
   const search = new URLSearchParams();
-  if (view === "grid") {
-    search.set("view", "grid");
-  }
+  search.set("view", view);
   if (range === "month") {
     search.set("range", "month");
   }
   if (date) {
     search.set(range === "month" ? "month" : "week", date);
   }
-  const query = search.toString();
-  return query ? `/budget?${query}` : "/budget";
+  return `/budget?${search.toString()}`;
 }
 
 // The bar above both Plan views, like Google Calendar's: Today, ‹ ›, the week or month,

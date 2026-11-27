@@ -2,23 +2,23 @@
 
 import { useCallback, useState } from "react";
 import Link from "next/link";
-import GoalStatusLabel from "@/components/goal-status-label";
-import GoalBar from "@/components/goal-bar";
-import { directionOf, goalProgress, goalStatus, overLimits, type GoalDirection } from "@/lib/goals";
+import { directionOf, goalProgress, overLimits, type GoalDirection } from "@/lib/goals";
 import { formatHours } from "@/lib/hours";
-import { saveDayPlan, saveGoal } from "./actions";
+import type { WeekGoals } from "@/lib/week-goals";
+import { saveDayPlan } from "./actions";
 import CalendarSidebar from "./calendar-sidebar";
 import PlanBlockDialog, { type BlockDraft } from "./plan-block-dialog";
 import { useHiddenCategories } from "./use-hidden-categories";
 import { draftAt } from "./week-calendar";
 
-// Plan → Grid: the week as a budget sheet. A goal per category, the week's progress, and the
-// hours planned per day. Wide cards show all 7 days as columns. Narrower ones (phones) show
-// one day at a time, picked from a strip of the week's days. Which layout shows is decided by
-// the card's own width (a container query), so there's nothing to measure.
+// Plan → Grid: the week's numbers. The totals, then each category's week ("6 / 21h") and the
+// hours per day: done on past days, a field to type the plan on today and later days. Goals
+// are set in the sidebar (the same one the calendar has). Wide cards show all 7 days as
+// columns; narrower ones (phones) show one day at a time, picked from a strip of the week's
+// days. Which layout shows is decided by the card's own width (a container query).
 
-// Name, goal, week, then the 7 days
-const COLUMNS = "minmax(7rem,10rem) 8rem minmax(8.5rem,11rem) repeat(7,minmax(4.5rem,1fr))";
+// Name, week, then the 7 days
+const COLUMNS = "minmax(7rem,10rem) 6.5rem repeat(7,minmax(4.5rem,1fr))";
 
 type GridDay = {
   date: string;
@@ -45,20 +45,13 @@ type WeekGridProps = {
   groups: GridGroup[];
   days: GridDay[];
   today: string;
-  // Weekly goals, keyed by category ID. A category with no goal isn't in here; 0 is a real goal.
-  goals: Record<string, number>;
-  // Which way each goal points ("at least" or "at most"), keyed by category ID
-  directions: Record<string, GoalDirection>;
+  // Each category's goal and the week's progress, the same numbers the sidebar shows
+  goals: WeekGoals;
   // Hours keyed by "<categoryId>:<date>":
-  // planned (the day's plan: the bigger of typed and scheduled), plannedAhead (the part still
-  // after now), actual (tracked), typed (typed into the grid), scheduled (Plan calendar blocks)
-  planned: Record<string, number>;
-  plannedAhead: Record<string, number>;
+  // actual (tracked), typed (typed into the grid), scheduled (Plan calendar blocks)
   actual: Record<string, number>;
   typed: Record<string, number>;
   scheduled: Record<string, number>;
-  // The part of the scheduled hours still after now (all of it on later days)
-  scheduledAhead: Record<string, number>;
   // Adding plan blocks needs a Plan calendar
   canAddBlocks: boolean;
   // Logging done time needs a Log calendar
@@ -162,11 +155,9 @@ export default function WeekGrid({
   days,
   today,
   goals,
-  directions,
   actual,
   typed,
   scheduled,
-  scheduledAhead,
   canAddBlocks,
   canLog,
   timeZone,
@@ -181,36 +172,14 @@ export default function WeekGrid({
     .filter((group) => group.categories.length > 0);
   const shownCategories = shownGroups.flatMap((group) => group.categories);
 
-  // Goals: each one's text, so a field can be empty while you type
-  const [goalText, setGoalText] = useState<Record<string, string>>(() => asText(goals));
-  const [goalStatusById, setGoalStatusById] = useState<Record<string, SaveStatus>>({});
-  // Day plans: the same, keyed by "<categoryId>:<date>"
+  // Day plans: each one's text, so a field can be empty while you type. Keyed by "<categoryId>:<date>".
   const [dayText, setDayText] = useState<Record<string, string>>(() => asText(typed));
   const [dayStatus, setDayStatus] = useState<Record<string, SaveStatus>>({});
-  // The field being typed in (a category ID or a cell key), so new values from the server don't overwrite it
+  // The field being typed in, so new values from the server don't overwrite it
   const [editingKey, setEditingKey] = useState<string | null>(null);
 
-  // When the server sends new values (after a save, or "Copy last week's goals"), take them,
-  // except in the field you're typing in. This is React's "adjust state when a prop changes" pattern.
-  const [lastGoals, setLastGoals] = useState(goals);
-  if (goals !== lastGoals) {
-    setLastGoals(goals);
-    setGoalText((current) => {
-      const next = asText(goals);
-      if (editingKey && editingKey in current) {
-        next[editingKey] = current[editingKey];
-      }
-      return next;
-    });
-  }
-  // Each goal's direction, flipped right away by its goal / limit switch
-  const [directionById, setDirectionById] = useState<Record<string, GoalDirection>>(directions);
-  const [lastDirections, setLastDirections] = useState(directions);
-  if (directions !== lastDirections) {
-    setLastDirections(directions);
-    setDirectionById(directions);
-  }
-
+  // When the server sends new values (after a save), take them, except in the field you're
+  // typing in. This is React's "adjust state when a prop changes" pattern.
   const [lastTyped, setLastTyped] = useState(typed);
   if (typed !== lastTyped) {
     setLastTyped(typed);
@@ -223,80 +192,33 @@ export default function WeekGrid({
     });
   }
 
-  // null when the field is empty (no goal); 0 is a real goal
-  const goalOrNull = (categoryId: string) => hoursOrNull(goalText[categoryId]);
-  const goalFor = (categoryId: string) => goalOrNull(categoryId) ?? 0;
-  // A goal of 0 is always "at most"; an empty goal keeps whatever the switch says
-  const directionFor = (categoryId: string): GoalDirection => {
-    const goal = goalOrNull(categoryId);
-    return goal === null ? (directionById[categoryId] ?? "at_least") : directionOf(goal, directionById[categoryId]);
-  };
-
   const read = (values: Record<string, number>) => (key: string) => values[key] ?? 0;
   const actualAt = read(actual);
   const scheduledAt = read(scheduled);
-  const scheduledAheadAt = read(scheduledAhead);
   // What's typed in a day right now (0 when empty), so cells react as you type
   const typedAt = (key: string) => hoursOrNull(dayText[key]) ?? 0;
-
   // A day's plan: the bigger of what's typed and what's scheduled
   const plannedAt = (key: string) => Math.max(typedAt(key), scheduledAt(key));
-  // The part of a day's plan still ahead: later days count all of it; today counts what's typed
-  // minus what's already done, or the blocks still ahead if that's more; past days count none
-  const aheadAt = (key: string, date: string) => {
-    if (date < today) {
-      return 0;
-    }
-    if (date > today) {
-      return plannedAt(key);
-    }
-    return Math.max(typedAt(key) - actualAt(key), scheduledAheadAt(key));
-  };
-  const weekTotal = (categoryId: string, at: (key: string, date: string) => number) =>
-    days.reduce((sum, day) => sum + at(cellKey(categoryId, day.date), day.date), 0);
 
   // Dates are "YYYY-MM-DD", so comparing them as text puts them in order
   const kindOf = (date: string): DayKind => (date === today ? "today" : date > today ? "future" : "past");
-  // Only a week that isn't over yet can still get time planned
-  const weekStillOpen = days[days.length - 1].date >= today;
 
-  // Everything a row shows about its week
-  function rowFor(category: GridCategory) {
-    const goal = goalOrNull(category.id);
-    const done = weekTotal(category.id, actualAt);
-    const ahead = weekTotal(category.id, aheadAt);
-    const direction = directionFor(category.id);
-    const isLimit = direction === "at_most";
-    const weekly = goal === null ? null : goalStatus(goal, done, ahead, direction);
-    // A goal's hours not done and not planned yet ("2.5h unplanned")
-    const unplanned = goal !== null && !isLimit && weekStillOpen ? Math.max(0, goal - done - ahead) : 0;
-    return { goal, done, ahead, direction, isLimit, weekly, unplanned };
-  }
+  const goalOf = (categoryId: string) =>
+    goals[categoryId] ?? { goal: null, direction: "at_least" as GoalDirection, done: 0, ahead: 0 };
 
-  // The Total adds up "at least" goals only; limits aren't something to fill
-  const goalTotal = categories.reduce(
-    (sum, category) => sum + (directionFor(category.id) === "at_least" ? goalFor(category.id) : 0),
-    0
-  );
-  const doneTotal = categories.reduce((sum, c) => sum + weekTotal(c.id, actualAt), 0);
-  const aheadTotal = categories.reduce((sum, c) => sum + weekTotal(c.id, aheadAt), 0);
-
-  // Progress toward goals, for the header (null when there are no goals)
+  // The header's numbers, from the same goals and progress the sidebar shows
   const goalRows = categories
-    .filter((category) => goalOrNull(category.id) !== null)
-    .map((category) => ({
-      id: category.id,
-      color: category.color,
-      name: category.name,
-      goal: goalFor(category.id),
-      done: weekTotal(category.id, actualAt),
-      ahead: weekTotal(category.id, aheadAt),
-      direction: directionFor(category.id),
-    }));
+    .filter((category) => goalOf(category.id).goal !== null)
+    .map((category) => {
+      const entry = goalOf(category.id);
+      return { id: category.id, name: category.name, color: category.color, ...entry, goal: entry.goal! };
+    });
   const progress = goalProgress(goalRows);
   const overs = overLimits(goalRows).map((row) => ({ id: row.id, color: row.color, hours: row.done - row.goal }));
   // Time past "at most" limits, added up: shown below zero in the header
   const overTotal = overs.reduce((sum, over) => sum + over.hours, 0);
+  const doneTotal = categories.reduce((sum, category) => sum + goalOf(category.id).done, 0);
+  const aheadTotal = categories.reduce((sum, category) => sum + goalOf(category.id).ahead, 0);
   // "Done this week" leaves out time past limits: that shows on its own, as "Over limit"
   const doneCounted = doneTotal - overTotal;
   // The bar's pieces, counted the same way goalProgress counts them (nothing past a goal)
@@ -312,8 +234,6 @@ export default function WeekGrid({
     days.some((day) => day.date === today) ? today : days[0].date
   );
   const phoneDay = days.find((day) => day.date === phoneDate) ?? days[0];
-  // Phones: the category whose goal editor is open
-  const [openGoalId, setOpenGoalId] = useState<string | null>(null);
 
   // "+ Add" (in the sidebar): today at the next full hour, or 9 AM on the first day
   const [draft, setDraft] = useState<BlockDraft | null>(null);
@@ -325,25 +245,6 @@ export default function WeekGrid({
         ? draftAt(today, Math.ceil(nowMinutes / 60) * 60)
         : draftAt(days[0].date, 9 * 60)
     );
-  }
-
-  // Save one goal when its field loses focus (if it changed) or its direction is flipped
-  async function saveGoalField(categoryId: string, direction = directionById[categoryId] ?? "at_least") {
-    setEditingKey(null);
-    const hours = goalOrNull(categoryId);
-    if (hours === (goals[categoryId] ?? null) && direction === (directions[categoryId] ?? "at_least")) {
-      return;
-    }
-    // Nothing to save yet without hours; the direction is saved with them
-    if (hours === null && goals[categoryId] === undefined) {
-      return;
-    }
-    setGoalStatusById((current) => ({ ...current, [categoryId]: "saving" }));
-    const result = await saveGoal(weekStart, categoryId, hours, direction);
-    setGoalStatusById((current) => ({ ...current, [categoryId]: result.error ? "error" : "saved" }));
-    if (!result.error) {
-      clearSavedLater(setGoalStatusById, categoryId);
-    }
   }
 
   // Save one day's typed hours when its field loses focus, if they changed
@@ -364,92 +265,35 @@ export default function WeekGrid({
     }
   }
 
-  // The goal / limit switch: flip the direction and save it with the goal
-  function flipDirection(categoryId: string) {
-    const next: GoalDirection = (directionById[categoryId] ?? "at_least") === "at_least" ? "at_most" : "at_least";
-    setDirectionById((current) => ({ ...current, [categoryId]: next }));
-    saveGoalField(categoryId, next);
-  }
-
-  // The goal / limit switch joined to the hours field
-  function goalEditor(category: GridCategory) {
-    const goal = goalOrNull(category.id);
-    const isLimit = directionFor(category.id) === "at_most";
+  // A category's week, in numbers only: "6 / 21h", "4.5 / 0h max", or just "6h" without a goal
+  function weekNumbers(category: GridCategory) {
+    const { goal, direction, done } = goalOf(category.id);
+    if (goal === null) {
+      return <span className={done > 0 ? "text-stone-600" : "text-stone-300"}>{done > 0 ? formatHours(done) : "–"}</span>;
+    }
     return (
-      <div className="flex items-center">
-        {/* goal: at least (work toward it), or limit: at most. 0 is always a limit. */}
-        <button
-          type="button"
-          onClick={() => flipDirection(category.id)}
-          disabled={goal === 0}
-          title={isLimit ? "Limit: at most this many hours. Click to make it a goal." : "Goal: at least this many hours. Click to make it a limit."}
-          aria-label={`${category.name} is a ${isLimit ? "limit (at most)" : "goal (at least)"}. Switch.`}
-          className="-mr-px h-[30px] w-11 shrink-0 rounded-l-md border border-accent/40 bg-white text-xs font-medium text-stone-500 hover:brightness-95 disabled:cursor-default disabled:opacity-70"
-        >
-          {isLimit ? "limit" : "goal"}
-        </button>
-        <HoursField
-          value={goalText[category.id] ?? ""}
-          onChange={(value) => setGoalText((current) => ({ ...current, [category.id]: value }))}
-          onFocus={() => setEditingKey(category.id)}
-          onBlur={() => saveGoalField(category.id)}
-          max={168}
-          placeholder="Set"
-          label={`Weekly goal for ${category.name}, in hours`}
-          status={goalStatusById[category.id]}
-          tinted
-          attached
-        />
-      </div>
-    );
-  }
-
-  // The week for one category: done of goal, the bar, then the status (and what's unplanned)
-  function weekSummary(category: GridCategory) {
-    const { goal, done, ahead, direction, isLimit, weekly, unplanned } = rowFor(category);
-    return (
-      <div className="flex min-h-14 flex-col justify-center text-sm leading-snug">
-        {goal === null ? (
-          <p className={done > 0 ? "text-stone-600" : "text-stone-300"}>
-            {done > 0 ? `${formatHours(done)} done` : "–"}
-          </p>
-        ) : (
-          <>
-            {/* "2 of 3h max", or "4.5 over 0h max" once a limit is passed */}
-            <p>
-              <span className="font-medium text-stone-900">{num(done)}</span>
-              <span className="text-stone-500">
-                {isLimit && done > goal ? " over " : " of "}
-                {formatHours(goal)}
-                {isLimit ? " max" : ""}
-              </span>
-            </p>
-            <GoalBar goal={goal} done={done} ahead={ahead} direction={direction} color={category.color} className="mt-1.5" />
-          </>
-        )}
-        {/* "Over limit" stays out: the line above already says it */}
-        {weekly && weekly.tone !== "over" && (
-          <p className="mt-1 text-xs">
-            <GoalStatusLabel status={weekly} />
-            {unplanned >= 0.01 && weekly.tone === "quiet" && (
-              <span className="text-stone-400"> · {formatHours(unplanned)} unplanned</span>
-            )}
-          </p>
-        )}
-      </div>
+      <span className="whitespace-nowrap">
+        <span className="font-medium text-stone-900">{num(done)}</span>
+        <span className="text-stone-500">
+          {" "}
+          / {formatHours(goal)}
+          {direction === "at_most" ? " max" : ""}
+        </span>
+      </span>
     );
   }
 
   // One category on one day: what happened (past), or a field to type the plan (today and later)
-  function dayCell(category: GridCategory, day: GridDay, goal: number | null, direction: GoalDirection) {
+  function dayCell(category: GridCategory, day: GridDay) {
     const key = cellKey(category.id, day.date);
     const kind = kindOf(day.date);
+    const { goal, direction } = goalOf(category.id);
 
     if (kind === "past") {
       return (
         <PastCell
           key={day.date}
-          href={`/budget?week=${day.date}`}
+          href={`/budget?view=calendar&week=${day.date}`}
           label={`${category.name}, ${day.label}`}
           done={actualAt(key)}
           planned={plannedAt(key)}
@@ -498,8 +342,10 @@ export default function WeekGrid({
     return { future, total };
   }
 
+  const shownDone = shownCategories.reduce((sum, category) => sum + goalOf(category.id).done, 0);
+
   return (
-    <div className="mt-6 grid gap-6 lg:grid-cols-[11rem_minmax(0,1fr)]">
+    <div className="mt-6 grid gap-6 lg:grid-cols-[13rem_minmax(0,1fr)]">
       <CalendarSidebar
         groups={groups}
         hidden={hidden}
@@ -508,6 +354,7 @@ export default function WeekGrid({
         timeZone={timeZone}
         today={today}
         miniMonth={{ initialMonth: days[3].date.slice(0, 7), selected: days.map((day) => day.date) }}
+        goals={{ goals, weekStart, weekStillOpen: days[days.length - 1].date >= today }}
         showLegend={false}
       />
 
@@ -558,15 +405,15 @@ export default function WeekGrid({
             </div>
           ) : (
             <p className="min-w-64 flex-1 text-sm text-stone-500 md:border-l md:border-stone-100 md:pl-10">
-              Set a weekly goal below to see your progress here.
+              Set a goal in the sidebar to see your progress here.
             </p>
           )}
         </div>
 
         {/* Wide: all 7 days as columns */}
-        <div className="hidden @min-[61rem]:block">
+        <div className="hidden @min-[51rem]:block">
           <p className="mt-6 text-sm text-stone-600">
-            Type a weekly goal for each category, and the hours you plan for each day. Both save on their own.
+            Type the hours you plan for each day. They save on their own.
           </p>
 
           <div className="mt-3 rounded-xl border border-stone-200 bg-white px-4 pb-4">
@@ -574,13 +421,12 @@ export default function WeekGrid({
             <div className="sticky top-0 z-10 -mx-4 rounded-t-xl border-b border-stone-200 bg-stone-100 px-4 pt-3">
               <div style={{ gridTemplateColumns: COLUMNS }} className="grid items-center gap-2 pb-2 text-sm text-stone-500">
                 <span />
-                <span className="text-center font-medium text-accent">Goal ✎</span>
                 <span className="pl-1">Week</span>
                 {days.map((day) => (
                   // Opens this week in the calendar
                   <Link
                     key={day.date}
-                    href={`/budget?week=${day.date}`}
+                    href={`/budget?view=calendar&week=${day.date}`}
                     title={`Open ${day.label} in the calendar`}
                     className={`rounded-md py-1.5 text-center text-base font-medium transition-colors ${
                       day.date === today ? "bg-accent-soft font-semibold text-accent" : "text-stone-600 hover:bg-stone-200/70"
@@ -595,28 +441,23 @@ export default function WeekGrid({
             {shownGroups.map((group) => (
               <div key={group.id} className="border-t border-stone-100 pt-2">
                 <p className="px-1 pt-1 font-semibold">{group.name}</p>
-                {group.categories.map((category) => {
-                  const { goal, direction } = rowFor(category);
-                  return (
-                    <div key={category.id} style={{ gridTemplateColumns: COLUMNS }} className="grid items-center gap-2 py-2">
-                      <span className="flex items-center gap-2.5 px-1 text-base">
-                        <span className="size-3.5 shrink-0 rounded-full" style={{ backgroundColor: category.color }} />
-                        <span className="truncate">{category.name}</span>
-                      </span>
-                      {goalEditor(category)}
-                      <div className="pl-1">{weekSummary(category)}</div>
-                      {days.map((day) => dayCell(category, day, goal, direction))}
-                    </div>
-                  );
-                })}
+                {group.categories.map((category) => (
+                  <div key={category.id} style={{ gridTemplateColumns: COLUMNS }} className="grid items-center gap-2 py-2">
+                    <span className="flex items-center gap-2.5 px-1 text-base">
+                      <span className="size-3.5 shrink-0 rounded-full" style={{ backgroundColor: category.color }} />
+                      <span className="truncate">{category.name}</span>
+                    </span>
+                    <span className="pl-1 text-sm tabular-nums">{weekNumbers(category)}</span>
+                    {days.map((day) => dayCell(category, day))}
+                  </div>
+                ))}
               </div>
             ))}
 
             {/* Totals per day, for the rows showing */}
             <div style={{ gridTemplateColumns: COLUMNS }} className="grid items-center gap-2 border-t border-stone-200 pt-2 text-sm font-semibold">
               <span className="px-1">Total</span>
-              <span className="pr-5 text-right tabular-nums">{formatHours(goalTotal)}</span>
-              <span />
+              <span className="pl-1 tabular-nums">{shownDone > 0 ? formatHours(shownDone) : "–"}</span>
               {days.map((day) => {
                 const { future, total } = dayTotal(day);
                 return (
@@ -630,7 +471,7 @@ export default function WeekGrid({
         </div>
 
         {/* Narrow (phones): pick a day, then each row shows that day */}
-        <div className="@min-[61rem]:hidden">
+        <div className="@min-[51rem]:hidden">
           <div className="mt-4 grid grid-cols-7 gap-1" role="tablist" aria-label="Choose a day">
             {days.map((day) => {
               const isSelected = day.date === phoneDate;
@@ -665,37 +506,21 @@ export default function WeekGrid({
             {shownGroups.map((group) => (
               <div key={group.id}>
                 <p className="pt-3 text-xs font-semibold text-stone-500">{group.name}</p>
-                {group.categories.map((category) => {
-                  const { goal, direction, isLimit } = rowFor(category);
-                  const open = openGoalId === category.id;
-                  return (
-                    <div
-                      key={category.id}
-                      className="grid grid-cols-[minmax(0,1fr)_4.5rem] items-center gap-3 border-b border-stone-100 py-2 last:border-b-0"
-                    >
-                      <div className="min-w-0">
-                        <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
-                          <span className="size-2.5 shrink-0 rounded-full" style={{ backgroundColor: category.color }} />
-                          <span>{category.name}</span>
-                          {/* The goal, as a small chip; tap to change it */}
-                          <button
-                            type="button"
-                            onClick={() => setOpenGoalId(open ? null : category.id)}
-                            aria-expanded={open}
-                            className={`rounded-full border px-2 py-px text-[11px] ${
-                              open ? "border-accent text-accent" : "border-stone-200 text-stone-500"
-                            }`}
-                          >
-                            {goal === null ? "Set goal" : `${formatHours(goal)} ${isLimit ? "limit" : "goal"}`}
-                          </button>
-                        </div>
-                        {open && <div className="mt-2 w-36">{goalEditor(category)}</div>}
-                        {goal !== null && <div className="-mt-1">{weekSummary(category)}</div>}
+                {group.categories.map((category) => (
+                  <div
+                    key={category.id}
+                    className="grid grid-cols-[minmax(0,1fr)_4.5rem] items-center gap-3 border-b border-stone-100 py-2 last:border-b-0"
+                  >
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-2">
+                        <span className="size-2.5 shrink-0 rounded-full" style={{ backgroundColor: category.color }} />
+                        <span className="truncate">{category.name}</span>
                       </div>
-                      {dayCell(category, phoneDay, goal, direction)}
+                      <p className="mt-0.5 pl-4.5 text-xs tabular-nums">{weekNumbers(category)}</p>
                     </div>
-                  );
-                })}
+                    {dayCell(category, phoneDay)}
+                  </div>
+                ))}
               </div>
             ))}
             {(() => {
@@ -752,11 +577,7 @@ type HoursFieldProps = {
   placeholder: string;
   label: string;
   status?: SaveStatus;
-  // The goal field: tinted and outlined. Day fields are lighter.
-  tinted?: boolean;
   compact?: boolean;
-  // Joined to a button on its left (the goal's goal / limit switch)
-  attached?: boolean;
 };
 
 // A number field for hours that saves when it loses focus (Enter does the same)
@@ -769,9 +590,7 @@ function HoursField({
   placeholder,
   label,
   status,
-  tinted,
   compact,
-  attached,
 }: HoursFieldProps) {
   return (
     <div className="relative w-full">
@@ -793,10 +612,10 @@ function HoursField({
         maxLength={5}
         placeholder={placeholder}
         aria-label={label}
-        className={`w-full appearance-none border ${attached ? "rounded-r-md" : "rounded-md"} text-right text-sm font-medium tabular-nums outline-none [-moz-appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none placeholder:font-normal placeholder:text-stone-400 focus:bg-white focus:ring-2 focus:ring-accent/30 ${
+        className={`w-full appearance-none rounded-md border bg-white text-right text-sm font-medium tabular-nums outline-none [-moz-appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none placeholder:font-normal placeholder:text-stone-400 focus:bg-white focus:ring-2 focus:ring-accent/30 ${
           compact ? "py-0.5 pl-1 pr-4" : "py-1 pl-2 pr-5"
-        } ${tinted ? "bg-accent-soft/50" : "bg-white"} ${
-          status === "error" ? "border-red-400" : tinted ? "border-accent/40" : "border-stone-200"
+        } ${
+          status === "error" ? "border-red-400" : "border-stone-200"
         }`}
       />
       <span className="pointer-events-none absolute right-1.5 top-1/2 -translate-y-1/2 text-xs text-stone-400">

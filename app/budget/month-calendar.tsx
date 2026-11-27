@@ -2,7 +2,7 @@
 
 import { useCallback, useState, type MouseEvent } from "react";
 import Link from "next/link";
-import CalendarSidebar, { type ColoredCategoryGroup } from "./calendar-sidebar";
+import CalendarSidebar, { type ColoredCategoryGroup, type SidebarGoalsData } from "./calendar-sidebar";
 import PlanBlockDialog, { type BlockDraft } from "./plan-block-dialog";
 import { UNCATEGORIZED, useHiddenCategories } from "./use-hidden-categories";
 import { draftAt, type CalendarBlock, type CalendarDay } from "./week-calendar";
@@ -20,6 +20,7 @@ type MonthCalendarProps = {
   canLog: boolean;
   groups: ColoredCategoryGroup[];
   timeZone: string;
+  goals: SidebarGoalsData;
 };
 
 const WEEKDAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
@@ -38,6 +39,7 @@ export default function MonthCalendar({
   canLog,
   groups,
   timeZone,
+  goals,
 }: MonthCalendarProps) {
   const canAdd = canAddBlocks || canLog;
   const { hidden, toggle } = useHiddenCategories();
@@ -90,8 +92,9 @@ export default function MonthCalendar({
   })();
 
   return (
-    <div className="mt-6 grid gap-6 lg:grid-cols-[11rem_minmax(0,1fr)]">
+    <div className="mt-6 grid gap-6 lg:grid-cols-[13rem_minmax(0,1fr)]">
       <CalendarSidebar
+        goals={goals}
         groups={groups}
         hidden={hidden}
         onToggle={toggle}
@@ -127,7 +130,7 @@ export default function MonthCalendar({
                   } ${inMonth ? "" : "bg-stone-50/70"} ${canAdd ? "cursor-pointer" : ""}`}
                 >
                   <Link
-                    href={`/budget?week=${day.date}`}
+                    href={`/budget?view=calendar&week=${day.date}`}
                     title={`Open the week of ${day.label}`}
                     className={`mb-1 flex size-6 items-center justify-center rounded-full text-xs tabular-nums ${
                       isToday
@@ -168,7 +171,7 @@ export default function MonthCalendar({
                     })}
                     {extra > 0 && (
                       <Link
-                        href={`/budget?week=${day.date}`}
+                        href={`/budget?view=calendar&week=${day.date}`}
                         className="block px-1 text-[10px] font-medium text-stone-500 hover:text-stone-900"
                       >
                         +{extra} more

@@ -1,12 +1,20 @@
 "use client";
 
+import type { WeekGoals } from "@/lib/week-goals";
 import MiniMonth from "./mini-month";
-import { UNCATEGORIZED } from "./use-hidden-categories";
+import SidebarGoals from "./sidebar-goals";
 
 export type ColoredCategoryGroup = {
   id: string;
   name: string;
   categories: { id: string; name: string; color: string }[];
+};
+
+// What the sidebar's goals need: a week's goals and progress, and which week they're for
+export type SidebarGoalsData = {
+  goals: WeekGoals;
+  weekStart: string;
+  weekStillOpen: boolean;
 };
 
 type CalendarSidebarProps = {
@@ -19,12 +27,14 @@ type CalendarSidebarProps = {
   today: string;
   // The small month: which month it opens on, and the dates being shown (highlighted)
   miniMonth: { initialMonth: string; selected: string[] };
+  goals: SidebarGoalsData;
   // The Plan (left) / Done (right) key, for the calendar. The grid leaves it out.
   showLegend?: boolean;
 };
 
-// The Plan page's left column: "+ Add", a small month, the categories to show, and a legend.
-// On narrow screens it sits above the calendar, with the categories folded away.
+// The Plan page's left column, the same in both views: "+ Add", a small month, the goals
+// (each category with its checkbox, goal and progress), and a legend.
+// On narrow screens it sits above the view, with the goals folded away.
 export default function CalendarSidebar({
   groups,
   hidden,
@@ -33,39 +43,20 @@ export default function CalendarSidebar({
   timeZone,
   today,
   miniMonth,
+  goals,
   showLegend = true,
 }: CalendarSidebarProps) {
   const hiddenCount = hidden.size;
 
-  const categoryList = (
-    <div className="space-y-3 text-sm">
-      {groups.map((group) => (
-        <div key={group.id}>
-          <p className="text-xs text-stone-400">{group.name}</p>
-          <ul className="mt-1 space-y-0.5">
-            {group.categories.map((category) => (
-              <li key={category.id}>
-                <CategoryCheckbox
-                  id={category.id}
-                  name={category.name}
-                  color={category.color}
-                  checked={!hidden.has(category.id)}
-                  onToggle={onToggle}
-                />
-              </li>
-            ))}
-          </ul>
-        </div>
-      ))}
-      <CategoryCheckbox
-        id={UNCATEGORIZED}
-        name="Uncategorized"
-        color="#a8a29e"
-        checked={!hidden.has(UNCATEGORIZED)}
-        onToggle={onToggle}
-        muted
-      />
-    </div>
+  const goalList = (
+    <SidebarGoals
+      groups={groups}
+      goals={goals.goals}
+      weekStart={goals.weekStart}
+      weekStillOpen={goals.weekStillOpen}
+      hidden={hidden}
+      onToggle={onToggle}
+    />
   );
 
   return (
@@ -91,18 +82,15 @@ export default function CalendarSidebar({
       </div>
 
       {/* Wide screens: always open */}
-      <div className="mt-6 hidden lg:block">
-        <p className="mb-2 text-sm font-medium">Categories</p>
-        {categoryList}
-      </div>
+      <div className="mt-6 hidden lg:block">{goalList}</div>
 
-      {/* Narrow screens: folded, so the calendar stays near the top */}
+      {/* Narrow screens: folded, so the view stays near the top */}
       <details className="mt-3 rounded-lg border border-stone-200 bg-white px-4 py-2 lg:hidden">
         <summary className="cursor-pointer text-sm font-medium">
-          Categories
+          Goals
           {hiddenCount > 0 && <span className="ml-2 font-normal text-stone-400">{hiddenCount} hidden</span>}
         </summary>
-        <div className="mt-3 pb-2">{categoryList}</div>
+        <div className="mt-3 pb-2">{goalList}</div>
       </details>
 
       <div className={`mt-6 hidden space-y-1.5 text-xs text-stone-500 ${showLegend ? "lg:block" : ""}`}>
@@ -117,34 +105,5 @@ export default function CalendarSidebar({
         <p className="pt-1 text-stone-400">Times in {timeZone}</p>
       </div>
     </aside>
-  );
-}
-
-function CategoryCheckbox({
-  id,
-  name,
-  color,
-  checked,
-  onToggle,
-  muted,
-}: {
-  id: string;
-  name: string;
-  color: string;
-  checked: boolean;
-  onToggle: (id: string) => void;
-  muted?: boolean;
-}) {
-  return (
-    <label className="flex cursor-pointer items-center gap-2 rounded px-1 py-0.5 hover:bg-stone-100">
-      <input
-        type="checkbox"
-        checked={checked}
-        onChange={() => onToggle(id)}
-        className="size-3.5 shrink-0"
-        style={{ accentColor: color }}
-      />
-      <span className={`truncate ${muted ? "text-stone-500" : ""}`}>{name}</span>
-    </label>
   );
 }

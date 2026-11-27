@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState, type MouseEvent } from "react";
 import Link from "next/link";
-import CalendarSidebar, { type ColoredCategoryGroup } from "./calendar-sidebar";
+import CalendarSidebar, { type ColoredCategoryGroup, type SidebarGoalsData } from "./calendar-sidebar";
 import PlanBlockDialog, { type BlockDraft } from "./plan-block-dialog";
 import { UNCATEGORIZED, useHiddenCategories } from "./use-hidden-categories";
 
@@ -69,6 +69,8 @@ type WeekCalendarProps = {
   // The Plan page's Calendar view: a sidebar with "+ Add" and category checkboxes
   // (in place of the button below). Unchecked categories are hidden, remembered on the device.
   withSidebar?: boolean;
+  // The sidebar's goals (needed with withSidebar)
+  goals?: SidebarGoalsData;
 };
 
 // Place one day's blocks: cut them to the day, then put overlapping blocks side by side
@@ -199,6 +201,7 @@ export default function WeekCalendar({
   scrollHeight,
   headerHref,
   withSidebar,
+  goals,
 }: WeekCalendarProps) {
   // Adding works when there's somewhere to write: the Plan calendar, the Log calendar, or both
   const canAdd = canAddBlocks || canLog;
@@ -267,10 +270,11 @@ export default function WeekCalendar({
 
   return (
     <div
-      className={withSidebar ? "mt-6 grid gap-6 lg:grid-cols-[11rem_minmax(0,1fr)]" : undefined}
+      className={withSidebar ? "mt-6 grid gap-6 lg:grid-cols-[13rem_minmax(0,1fr)]" : undefined}
     >
-      {withSidebar && (
+      {withSidebar && goals && (
         <CalendarSidebar
+          goals={goals}
           groups={groups}
           hidden={hidden}
           onToggle={toggle}

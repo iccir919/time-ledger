@@ -12,7 +12,11 @@ import { combinePlans } from "@/lib/plan-math";
 import { copyLastWeekGoals } from "./actions";
 import { createPlanCalendar } from "@/app/calendars/actions";
 import WeekGrid from "./week-grid";
-import type { GoalDirection } from "@/lib/goals";
+import { directionOf, type GoalDirection } from "@/lib/goals";
+import type { WeekGoals } from "@/lib/week-goals";
+import { cookies } from "next/headers";
+import { VIEW_COOKIE } from "@/lib/plan-view";
+import RememberView from "./remember-view";
 import CalendarView from "./calendar-view";
 import PlanTopBar from "./plan-top-bar";
 
@@ -47,8 +51,10 @@ export default async function BudgetPage({ searchParams }: BudgetPageProps) {
 
   // The week being viewed, from the URL (?week=2026-11-23); defaults to this week
   const { week: weekParam, plan, view: viewParam, range, month: monthParam } = await searchParams;
-  // Calendar is the default; the grid is ?view=grid
-  const view = viewParam === "grid" ? "grid" : "calendar";
+  // ?view=calendar or ?view=grid; without one, the view used last (remembered in a cookie),
+  // or the calendar the first time
+  const savedView = (await cookies()).get(VIEW_COOKIE)?.value;
+  const view = (viewParam ?? savedView) === "grid" ? "grid" : "calendar";
   const week =
     sync?.status === "ok"
       ? getWeekInRange(sync.timeZone, weekParam, { weeksBack: 1, weeksAhead: Infinity })
@@ -76,6 +82,7 @@ export default async function BudgetPage({ searchParams }: BudgetPageProps) {
 
         {sync?.status === "ok" && week && (
           <>
+            <RememberView view={view} />
             <PlanTopBar week={week} month={month} timeZone={sync.timeZone} view={view} />
 
             {view === "calendar" ? (
@@ -252,7 +259,7 @@ async function Plan({ userId, timeZone, week, planStatus }: PlanProps) {
   }
 
   // Each day's plan (the bigger of typed and scheduled), and the part still ahead
-  const { planned, plannedAhead } = combinePlans({
+  const { plannedAhead } = combinePlans({
     categoryIds: [...categoryById.keys()],
     days: week.days,
     today: week.today,
@@ -261,6 +268,25 @@ async function Plan({ userId, timeZone, week, planStatus }: PlanProps) {
     scheduledAhead,
     actual,
   });
+
+  // Each category's goal and the week's progress: the numbers the sidebar and the grid's
+  // Week column show (the calendar view loads the same numbers with loadWeekGoals)
+  const weekGoals: WeekGoals = {};
+  for (const category of categoryById.values()) {
+    const goal = category.id in goals ? goals[category.id] : null;
+    const sumWeek = (values: Record<string, number>) =>
+      week.days.reduce((sum, day) => sum + (values[`${category.id}:${day.date}`] ?? 0), 0);
+    const done = sumWeek(actual);
+    const ahead = sumWeek(plannedAhead);
+    if (goal !== null || done > 0 || ahead > 0) {
+      weekGoals[category.id] = {
+        goal,
+        direction: goal === null ? "at_least" : directionOf(goal, directions[category.id]),
+        done,
+        ahead,
+      };
+    }
+  }
 
   const hasGoals = goalsResult.data.some((goal) => Number(goal.goal) > 0);
   const showCopyLastWeek = !hasGoals && (previousGoalsResult.count ?? 0) > 0;
@@ -364,14 +390,10 @@ async function Plan({ userId, timeZone, week, planStatus }: PlanProps) {
         groups={groups}
         days={days}
         today={week.today}
-        goals={goals}
-        directions={directions}
-        planned={planned}
-        plannedAhead={plannedAhead}
+        goals={weekGoals}
         actual={actual}
         typed={typed}
         scheduled={scheduled}
-        scheduledAhead={scheduledAhead}
         canAddBlocks={Boolean(planCalendarId) && !planMissing}
         canLog={Boolean(logCalendarId)}
         timeZone={timeZone}
