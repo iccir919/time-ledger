@@ -1,5 +1,5 @@
 // Every copy of Time Ledger (local and production) names its Plan calendar starting with this
-export const PLAN_CALENDAR_BASE_NAME = "Time Ledger Plan";
+const PLAN_CALENDAR_BASE_NAME = "Time Ledger Plan";
 
 // The name this copy of the app uses when it creates a Plan calendar.
 // Set PLAN_CALENDAR_NAME in .env.development.local (e.g. "Time Ledger Plan (dev)") so the

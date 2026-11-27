@@ -115,13 +115,13 @@ async function Plan({ userId, timeZone, week, planStatus }: PlanProps) {
         .order("sort_order", { referencedTable: "categories" }),
       supabase
         .from("weekly_budgets")
-        .select("category_id, planned_hours, direction")
+        .select("category_id, goal, direction")
         .eq("week_start", week.weekStart),
       supabase
         .from("weekly_budgets")
         .select("id", { count: "exact", head: true })
         .eq("week_start", week.previousWeekStart)
-        .gt("planned_hours", 0),
+        .gt("goal", 0),
       supabase
         .from("events")
         .select("category_id, start_at, end_at")
@@ -172,7 +172,7 @@ async function Plan({ userId, timeZone, week, planStatus }: PlanProps) {
   const goals: Record<string, number> = {};
   const directions: Record<string, GoalDirection> = {};
   for (const goal of goalsResult.data) {
-    goals[goal.category_id] = Number(goal.planned_hours);
+    goals[goal.category_id] = Number(goal.goal);
     directions[goal.category_id] = goal.direction === "at_most" ? "at_most" : "at_least";
   }
 
@@ -262,7 +262,7 @@ async function Plan({ userId, timeZone, week, planStatus }: PlanProps) {
     actual,
   });
 
-  const hasGoals = goalsResult.data.some((goal) => Number(goal.planned_hours) > 0);
+  const hasGoals = goalsResult.data.some((goal) => Number(goal.goal) > 0);
   const showCopyLastWeek = !hasGoals && (previousGoalsResult.count ?? 0) > 0;
 
   // Day labels in the user's time zone, e.g. "Mon" and "16"

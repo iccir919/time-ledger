@@ -6,7 +6,7 @@ import { loadPlanBlocks, nameKey, type PlanBlock } from "@/lib/plan-blocks";
 import type { CalendarBlock, CalendarDay } from "@/app/budget/week-calendar";
 
 // Gray for events without a category and plan blocks that don't match one
-export const NO_CATEGORY_COLOR = "#a8a29e";
+const NO_CATEGORY_COLOR = "#a8a29e";
 
 // A week, or the whole weeks a month view shows
 type CalendarRange = {

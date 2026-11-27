@@ -29,7 +29,7 @@ export default async function Overview({ userId, timeZone, week }: OverviewProps
       loadCalendarData(userId, timeZone, week),
       supabase
         .from("weekly_budgets")
-        .select("category_id, planned_hours, direction")
+        .select("category_id, goal, direction")
         .eq("week_start", week.weekStart),
       supabase
         .from("weekly_budgets")
@@ -114,9 +114,9 @@ export default async function Overview({ userId, timeZone, week }: OverviewProps
     .filter((category) => goalByCategory.has(category.id))
     .map((category) => ({
       ...category,
-      goal: Number(goalByCategory.get(category.id)!.planned_hours),
+      goal: Number(goalByCategory.get(category.id)!.goal),
       direction: directionOf(
-        Number(goalByCategory.get(category.id)!.planned_hours),
+        Number(goalByCategory.get(category.id)!.goal),
         goalByCategory.get(category.id)!.direction === "at_most" ? "at_most" : "at_least"
       ),
       done: doneByCategory.get(category.id) ?? 0,

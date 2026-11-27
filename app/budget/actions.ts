@@ -48,7 +48,7 @@ export async function saveGoal(
             category_id: categoryId,
             week_start: weekStart,
             // A week has 168 hours
-            planned_hours: Math.round(Math.min(168, Math.max(0, hours)) * 100) / 100,
+            goal: Math.round(Math.min(168, Math.max(0, hours)) * 100) / 100,
             direction: hours === 0 ? "at_most" : direction,
           },
           { onConflict: "category_id,week_start" }
@@ -110,7 +110,7 @@ export async function copyLastWeekGoals(formData: FormData) {
   const supabase = await createClient();
   const { data: previous, error } = await supabase
     .from("weekly_budgets")
-    .select("category_id, planned_hours, direction")
+    .select("category_id, goal, direction")
     .eq("week_start", previousWeekStart);
 
   if (error) {
@@ -124,7 +124,7 @@ export async function copyLastWeekGoals(formData: FormData) {
   const { error: copyError } = await supabase.from("weekly_budgets").upsert(
     previous.map((row) => ({
       category_id: row.category_id,
-      planned_hours: row.planned_hours,
+      goal: row.goal,
       direction: row.direction,
       week_start: weekStart,
     })),

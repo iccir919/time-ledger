@@ -128,7 +128,6 @@ function Column({
   categories,
   max,
   title,
-  faded,
   unit,
   planned,
 }: {
@@ -136,7 +135,6 @@ function Column({
   categories: TrendCategory[];
   max: number;
   title: string;
-  faded?: boolean;
   unit: "hours" | "minutes";
   // Planned hours per category, stacked on top, faded
   planned?: number[];
@@ -148,7 +146,7 @@ function Column({
   return (
     <div
       title={`${title}: ${show(total)}${plannedTotal > 0 ? ` done, ${show(plannedTotal)} planned` : ""}`}
-      className={`flex min-w-0 flex-1 flex-col-reverse gap-px ${faded ? "opacity-50" : ""}`}
+      className="flex min-w-0 flex-1 flex-col-reverse gap-px"
       style={{ height: max > 0 ? `${((total + plannedTotal) / max) * 100}%` : 0 }}
     >
       {values.map((value, index) =>
@@ -272,10 +270,17 @@ function DaysView({
   const heights = columns.map((column) => sum(column.done) + sum(plannedOn(column.date) ?? []));
   const max = Math.max(...heights, average ?? 0) * 1.08;
 
-  // A few date labels under the chart: first, last and two between
-  const labelIndexes = [
-    ...new Set([0, Math.round((columns.length - 1) / 3), Math.round(((columns.length - 1) * 2) / 3), columns.length - 1]),
-  ];
+  // A few date labels under the chart: first, last and two between, with "Today" always among them
+  // (in place of whichever label is nearest, so they don't crowd)
+  const todayIndex = columns.findIndex((column) => column.isToday);
+  const evenIndexes = [0, Math.round((columns.length - 1) / 3), Math.round(((columns.length - 1) * 2) / 3), columns.length - 1];
+  if (todayIndex !== -1 && !evenIndexes.includes(todayIndex)) {
+    const nearest = evenIndexes.reduce((best, index) =>
+      Math.abs(index - todayIndex) < Math.abs(best - todayIndex) ? index : best
+    );
+    evenIndexes[evenIndexes.indexOf(nearest)] = todayIndex;
+  }
+  const labelIndexes = [...new Set(evenIndexes)].sort((a, b) => a - b);
 
   return (
     <>
@@ -291,8 +296,6 @@ function DaysView({
             categories={categories}
             max={max}
             title={column.isToday ? `${column.label} (so far)` : column.label}
-            // Today is faded while it's "so far"; with plans showing, the plans are what's faded
-            faded={column.isToday && !plan}
             unit="hours"
             planned={plannedOn(column.date) ?? undefined}
           />
@@ -306,7 +309,9 @@ function DaysView({
       </div>
       <div className="mt-2 flex justify-between text-xs text-stone-400">
         {labelIndexes.map((index) => (
-          <span key={index}>{columns[index].label}</span>
+          <span key={index} className={columns[index].isToday ? "font-medium text-stone-600" : undefined}>
+            {columns[index].label}
+          </span>
         ))}
       </div>
     </>

@@ -64,14 +64,8 @@ type WeekCalendarProps = {
   timeZone: string;
   // When set, the calendar is this many pixels tall and scrolls, starting just before now
   scrollHeight?: number;
-  // Fill the parent's height instead (the parent sets the height), scrolling the same way
-  fillHeight?: boolean;
   // Makes the day headers links, e.g. the dashboard's day opens Plan → Calendar
   headerHref?: string;
-  // The category new blocks start with, e.g. the one clicked in the Plan grid
-  defaultCategoryId?: string;
-  // Leave out the "Add time" button below, when the page puts its own elsewhere
-  hideAddButton?: boolean;
   // The Plan page's Calendar view: a sidebar with "+ Add" and category checkboxes
   // (in place of the button below). Unchecked categories are hidden, remembered on the device.
   withSidebar?: boolean;
@@ -203,10 +197,7 @@ export default function WeekCalendar({
   groups,
   timeZone,
   scrollHeight,
-  fillHeight,
   headerHref,
-  defaultCategoryId,
-  hideAddButton,
   withSidebar,
 }: WeekCalendarProps) {
   // Adding works when there's somewhere to write: the Plan calendar, the Log calendar, or both
@@ -237,7 +228,7 @@ export default function WeekCalendar({
   // In a scrolling calendar, start an hour before now (or at 8 AM on other days)
   const scrollRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
-    if (!scrollHeight && !fillHeight) {
+    if (!scrollHeight) {
       return;
     }
     // Wait a frame so the calendar has its final size before scrolling it
@@ -248,7 +239,7 @@ export default function WeekCalendar({
       }
     });
     return () => cancelAnimationFrame(frame);
-  }, [scrollHeight, fillHeight, nowMinutes]);
+  }, [scrollHeight, nowMinutes]);
 
   // The block being added or edited, or null when the popup is closed
   const [draft, setDraft] = useState<BlockDraft | null>(null);
@@ -261,28 +252,22 @@ export default function WeekCalendar({
     }
     const top = event.currentTarget.getBoundingClientRect().top;
     const minutes = ((event.clientY - top) / HOUR_HEIGHT) * 60;
-    setDraft({ ...draftAt(day.date, Math.floor(minutes / 30) * 30), categoryId: defaultCategoryId });
+    setDraft(draftAt(day.date, Math.floor(minutes / 30) * 30));
   }
 
   // The "Add time" / "+ Add" button: today if it's in this week (next full hour), otherwise Monday 9 AM
   function openFromButton() {
     const isTodayShown = days.some((day) => day.date === today);
     if (isTodayShown && nowMinutes !== null) {
-      setDraft({ ...draftAt(today, Math.ceil(nowMinutes / 60) * 60), categoryId: defaultCategoryId });
+      setDraft(draftAt(today, Math.ceil(nowMinutes / 60) * 60));
     } else {
-      setDraft({ ...draftAt(days[0].date, 9 * 60), categoryId: defaultCategoryId });
+      setDraft(draftAt(days[0].date, 9 * 60));
     }
   }
 
   return (
     <div
-      className={
-        fillHeight
-          ? "flex h-full flex-col"
-          : withSidebar
-            ? "mt-6 grid gap-6 lg:grid-cols-[11rem_minmax(0,1fr)]"
-            : undefined
-      }
+      className={withSidebar ? "mt-6 grid gap-6 lg:grid-cols-[11rem_minmax(0,1fr)]" : undefined}
     >
       {withSidebar && (
         <CalendarSidebar
@@ -300,7 +285,7 @@ export default function WeekCalendar({
       <div
         ref={scrollRef}
         className={`overflow-x-auto rounded-xl border border-stone-200 bg-white ${
-          fillHeight ? "min-h-0 flex-1 overflow-y-auto" : withSidebar ? "" : "mt-4"
+          withSidebar ? "" : "mt-4"
         } ${scrollHeight ? "overflow-y-auto" : ""}`}
         style={scrollHeight ? { maxHeight: scrollHeight } : undefined}
       >
@@ -381,7 +366,7 @@ export default function WeekCalendar({
       </div>
 
       {/* Below the calendar, full width. Later an "Add event" button sits beside it. */}
-      {canAdd && !hideAddButton && !withSidebar && (
+      {canAdd && !withSidebar && (
         <div className="mt-3 flex justify-center gap-3">
           <button
             type="button"

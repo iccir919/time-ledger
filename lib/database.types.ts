@@ -153,14 +153,14 @@ isOneToOne: false
                   ]
                 },"weekly_budgets": {
                   Row: {
-                    "category_id": string,"created_at": string,"direction": string,"id": string,"planned_hours": number,"user_id": string,"week_start": string
+                    "category_id": string,"created_at": string,"direction": string,"goal": number,"id": string,"user_id": string,"week_start": string
                   }
                   ComputedFields: never
                   Insert: {
-                    "category_id": string,"created_at"?: string,"direction"?: string,"id"?: string,"planned_hours"?: number,"user_id"?: string,"week_start": string
+                    "category_id": string,"created_at"?: string,"direction"?: string,"goal"?: number,"id"?: string,"user_id"?: string,"week_start": string
                   }
                   Update: {
-                    "category_id"?: string,"created_at"?: string,"direction"?: string,"id"?: string,"planned_hours"?: number,"user_id"?: string,"week_start"?: string
+                    "category_id"?: string,"created_at"?: string,"direction"?: string,"goal"?: number,"id"?: string,"user_id"?: string,"week_start"?: string
                   }
                   Relationships: [
                     {
