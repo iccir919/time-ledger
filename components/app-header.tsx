@@ -1,5 +1,6 @@
 import Link from "next/link";
 import SignOutButton from "@/components/sign-out-button";
+import SyncStatus from "@/components/sync-status";
 import { createClient } from "@/lib/supabase/server";
 
 type AppHeaderProps = {
@@ -17,9 +18,9 @@ export default async function AppHeader({ email }: AppHeaderProps) {
 
   return (
     <header className="border-b border-stone-200 bg-white">
-      <div className="mx-auto flex max-w-4xl items-center justify-between px-6 py-4">
+      <div className="mx-auto flex max-w-5xl items-center justify-between gap-6 px-6 py-4 xl:max-w-7xl 2xl:max-w-[88rem]">
         <div className="flex items-center gap-6">
-          <Link href="/dashboard" className="font-semibold tracking-tight">
+          <Link href="/dashboard" className="whitespace-nowrap font-semibold tracking-tight">
             Time Ledger
           </Link>
           <nav className="flex items-center gap-4 text-sm text-stone-600">
@@ -56,10 +57,13 @@ export default async function AppHeader({ email }: AppHeaderProps) {
                 <span className="pr-1" />
               )}
             </Link>
+            {/* A small sync icon: syncs in the background, hover for when, click to sync now */}
+            <SyncStatus />
           </nav>
         </div>
-        <div className="flex items-center gap-4">
-          <span className="text-sm text-stone-500">{email}</span>
+        <div className="flex items-center gap-4 whitespace-nowrap">
+          {/* Only on wide screens: it's the least needed thing up here */}
+          <span className="hidden text-sm text-stone-500 xl:inline">{email}</span>
           <SignOutButton />
         </div>
       </div>

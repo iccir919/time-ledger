@@ -1,28 +1,14 @@
 "use client";
 
 import { useState } from "react";
-import { createClient } from "@/lib/supabase/client";
+import { signInWithGoogle } from "@/lib/google-sign-in";
 
 export default function SignInButton() {
   const [loading, setLoading] = useState(false);
 
   async function signIn() {
     setLoading(true);
-    const supabase = createClient();
-    const { error } = await supabase.auth.signInWithOAuth({
-      provider: "google",
-      options: {
-        redirectTo: `${window.location.origin}/auth/callback`,
-        // Read all calendars; create and manage only calendars Time Ledger makes
-        scopes:
-          "https://www.googleapis.com/auth/calendar.readonly https://www.googleapis.com/auth/calendar.app.created",
-        queryParams: {
-          access_type: "offline",
-          prompt: "consent",
-        },
-      },
-    });
-
+    const { error } = await signInWithGoogle();
     if (error) {
       setLoading(false);
     }

@@ -139,14 +139,14 @@ isOneToOne: false
                   ]
                 },"user_settings": {
                   Row: {
-                    "log_calendar_id": string | null,"plan_calendar_id": string | null,"updated_at": string,"user_id": string
+                    "last_synced_at": string | null,"log_calendar_id": string | null,"plan_calendar_id": string | null,"time_zone": string | null,"updated_at": string,"user_id": string
                   }
                   ComputedFields: never
                   Insert: {
-                    "log_calendar_id"?: string | null,"plan_calendar_id"?: string | null,"updated_at"?: string,"user_id"?: string
+                    "last_synced_at"?: string | null,"log_calendar_id"?: string | null,"plan_calendar_id"?: string | null,"time_zone"?: string | null,"updated_at"?: string,"user_id"?: string
                   }
                   Update: {
-                    "log_calendar_id"?: string | null,"plan_calendar_id"?: string | null,"updated_at"?: string,"user_id"?: string
+                    "last_synced_at"?: string | null,"log_calendar_id"?: string | null,"plan_calendar_id"?: string | null,"time_zone"?: string | null,"updated_at"?: string,"user_id"?: string
                   }
                   Relationships: [
                     

@@ -3,6 +3,7 @@
 import { addDays, format, parseISO } from "date-fns";
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
+import { syncCalendars } from "@/lib/sync-events";
 import type { GoalDirection } from "@/lib/goals";
 import {
   deleteGoogleEvent,
@@ -255,9 +256,24 @@ export async function saveBlock(formData: FormData): Promise<BlockResult> {
     throw error;
   }
 
+  // Logged time counts right away: bring the Log calendar's new event in now
+  if (kind === "done") {
+    await syncAfterLogging(target.userId);
+  }
+
   revalidatePath("/budget");
   revalidatePath("/dashboard");
   return {};
+}
+
+// Sync now, so a change to logged time shows on the next render. A failure here isn't
+// the save's failure: the header's sync will catch up.
+async function syncAfterLogging(userId: string) {
+  try {
+    await syncCalendars(userId, { force: true });
+  } catch (error) {
+    console.error("Sync after logging failed:", error);
+  }
 }
 
 // Delete a plan block or a logged done event
@@ -288,6 +304,10 @@ export async function deleteBlock(blockId: string, kind: BlockKind): Promise<Blo
     if (!(error instanceof GoogleApiError && (error.status === 404 || error.status === 410))) {
       throw error;
     }
+  }
+
+  if (kind === "done") {
+    await syncAfterLogging(target.userId);
   }
 
   revalidatePath("/budget");

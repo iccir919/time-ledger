@@ -4,7 +4,7 @@ import { createClient } from "@/lib/supabase/server";
 import AppHeader from "@/components/app-header";
 import ReconnectGoogle from "@/components/reconnect-google";
 import { formatHours, hoursWithin } from "@/lib/hours";
-import { syncRecentWeeks, type SyncResult } from "@/lib/sync-events";
+import { loadCalendarContext, type SyncResult } from "@/lib/sync-events";
 import { getMonthGrid, getWeekInRange, type Week } from "@/lib/week";
 import { PLAN_CALENDAR_NAME } from "@/lib/plan-calendar";
 import { loadPlanBlocks, nameKey } from "@/lib/plan-blocks";
@@ -44,7 +44,7 @@ export default async function BudgetPage({ searchParams }: BudgetPageProps) {
   // Sync first so actual hours match Google
   let sync: SyncResult | null = null;
   try {
-    sync = await syncRecentWeeks(user.id);
+    sync = await loadCalendarContext(user.id);
   } catch (error) {
     console.error("Sync failed:", error);
   }

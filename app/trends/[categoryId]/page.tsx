@@ -4,7 +4,7 @@ import AppHeader from "@/components/app-header";
 import ReconnectGoogle from "@/components/reconnect-google";
 import { formatHours } from "@/lib/hours";
 import { createClient } from "@/lib/supabase/server";
-import { syncRecentWeeks, type SyncResult } from "@/lib/sync-events";
+import { loadCalendarContext, type SyncResult } from "@/lib/sync-events";
 import { loadTrends, type TrendCategory } from "@/lib/trends";
 import PatternsCard from "../patterns-card";
 import RangePicker from "../range-picker";
@@ -31,7 +31,7 @@ export default async function CategoryTrendsPage({ params, searchParams }: Categ
 
   let sync: SyncResult | null = null;
   try {
-    sync = await syncRecentWeeks(user.id);
+    sync = await loadCalendarContext(user.id);
   } catch (error) {
     console.error("Sync failed:", error);
   }

@@ -1,5 +1,6 @@
 import "server-only";
-import { subWeeks } from "date-fns";
+import { TZDate } from "@date-fns/tz";
+import { startOfWeek, subWeeks } from "date-fns";
 import { createClient } from "@/lib/supabase/server";
 import {
   getGoogleAccessToken,
@@ -10,6 +11,13 @@ import {
   type GoogleEvent,
 } from "@/lib/google";
 import { getCurrentWeek } from "@/lib/week";
+
+// Syncing brings each tracked calendar's events into the database. Pages read from the
+// database and never wait on Google; the header starts a sync in the background and
+// refreshes the page if anything changed.
+
+// A sync within this many seconds of the last one is skipped (moving between pages)
+const MIN_SECONDS_BETWEEN_SYNCS = 60;
 
 // Skip events that shouldn't count as time spent
 function shouldImport(event: GoogleEvent) {
@@ -31,12 +39,19 @@ function shouldImport(event: GoogleEvent) {
   return true;
 }
 
+export type SyncOutcome =
+  | { status: "reconnect" }
+  | { status: "ok"; timeZone: string; changed: boolean; syncedAt: string };
+
+// What pages need before showing anything (same shape the pages have always used)
 export type SyncResult =
   | { status: "reconnect" }
   | { status: "ok"; timeZone: string; week: ReturnType<typeof getCurrentWeek> };
 
-// Import this week's and last week's events from every tracked calendar
-async function syncRecentWeeksOnce(userId: string, forceRefresh = false): Promise<SyncResult> {
+// Sync once. Each calendar counts from the start of the week it began being tracked,
+// never before (like YNAB, history starts when you do). Within that, it syncs last week
+// and this week, all calendars at the same time. Only rows that changed are written.
+async function syncOnce(userId: string, forceRefresh: boolean): Promise<SyncOutcome> {
   const accessToken = await getGoogleAccessToken(userId, { forceRefresh });
   if (!accessToken) {
     return { status: "reconnect" };
@@ -44,23 +59,19 @@ async function syncRecentWeeksOnce(userId: string, forceRefresh = false): Promis
 
   const timeZone = await getGoogleTimeZone(accessToken);
   const week = getCurrentWeek(timeZone);
-
-  // Sync last week too, so skipping a few days doesn't leave gaps
-  const syncStart = subWeeks(week.start, 1);
+  const lastWeekStart = subWeeks(week.start, 1);
   const supabase = await createClient();
 
   const [calendarsResult, categoriesResult] = await Promise.all([
-    supabase.from("tracked_calendars").select("id, name, google_calendar_id, default_category_id"),
+    supabase.from("tracked_calendars").select("id, name, google_calendar_id, default_category_id, created_at"),
     supabase.from("categories").select("id"),
   ]);
-
   if (calendarsResult.error) {
     throw new Error(calendarsResult.error.message);
   }
   if (categoriesResult.error) {
     throw new Error(categoriesResult.error.message);
   }
-  const calendars = calendarsResult.data;
 
   // Events Time Ledger wrote (like done time logged in the app) carry their category's ID.
   // Only IDs of this user's categories count, in case a category was deleted since.
@@ -70,18 +81,23 @@ async function syncRecentWeeksOnce(userId: string, forceRefresh = false): Promis
     return id && categoryIds.has(id) ? id : null;
   };
 
-  for (const calendar of calendars) {
+  async function syncCalendar(calendar: (typeof calendarsResult.data)[number]) {
+    // The Monday of the week tracking started, in the user's time zone
+    const trackingStart = startOfWeek(new TZDate(Date.parse(calendar.created_at), timeZone), { weekStartsOn: 1 });
+    const from = trackingStart > lastWeekStart ? trackingStart : lastWeekStart;
+    let changed = false;
+
     let googleEvents: GoogleEvent[];
     try {
-      googleEvents = (
-        await listGoogleEvents(accessToken, calendar.google_calendar_id, syncStart, week.end)
-      ).filter(shouldImport);
+      googleEvents = (await listGoogleEvents(accessToken!, calendar.google_calendar_id, from, week.end)).filter(
+        shouldImport
+      );
     } catch (error) {
       // 404 or 410: the calendar was deleted in Google. Skip it so one missing calendar
       // doesn't stop the whole sync. The Calendars page offers to stop tracking it.
       if (error instanceof GoogleApiError && (error.status === 404 || error.status === 410)) {
         console.warn(`Skipping a tracked calendar that no longer exists: ${calendar.name}`);
-        continue;
+        return false;
       }
       throw error;
     }
@@ -89,15 +105,13 @@ async function syncRecentWeeksOnce(userId: string, forceRefresh = false): Promis
     // Events already saved for this calendar that overlap the sync range
     const { data: saved, error: savedError } = await supabase
       .from("events")
-      .select("id, google_event_id, category_id")
+      .select("id, google_event_id, category_id, title, start_at, end_at")
       .eq("tracked_calendar_id", calendar.id)
       .lt("start_at", week.end.toISOString())
-      .gt("end_at", syncStart.toISOString());
-
+      .gt("end_at", from.toISOString());
     if (savedError) {
       throw new Error(savedError.message);
     }
-
     const savedByGoogleId = new Map(saved.map((event) => [event.google_event_id, event]));
 
     const rows = googleEvents.map((event) => ({
@@ -109,50 +123,124 @@ async function syncRecentWeeksOnce(userId: string, forceRefresh = false): Promis
       // A category Time Ledger tagged the event with comes first (so changing it in the app
       // sticks); then one the user already chose; then the calendar's default
       category_id:
-        taggedCategory(event) ??
-        savedByGoogleId.get(event.id)?.category_id ??
-        calendar.default_category_id,
+        taggedCategory(event) ?? savedByGoogleId.get(event.id)?.category_id ?? calendar.default_category_id,
     }));
 
-    if (rows.length > 0) {
+    // Only new or different events get written. Times are compared as moments, since Google
+    // and the database write the same time differently.
+    const changedRows = rows.filter((row) => {
+      const before = savedByGoogleId.get(row.google_event_id);
+      return (
+        !before ||
+        before.title !== row.title ||
+        before.category_id !== row.category_id ||
+        Date.parse(before.start_at) !== Date.parse(row.start_at) ||
+        Date.parse(before.end_at) !== Date.parse(row.end_at)
+      );
+    });
+    if (changedRows.length > 0) {
       const { error: upsertError } = await supabase
         .from("events")
-        .upsert(rows, { onConflict: "tracked_calendar_id,google_event_id" });
-
+        .upsert(changedRows, { onConflict: "tracked_calendar_id,google_event_id" });
       if (upsertError) {
         throw new Error(upsertError.message);
       }
+      changed = true;
     }
 
     // Remove events that were deleted, cancelled, or declined in Google
     const googleIds = new Set(rows.map((row) => row.google_event_id));
-    const idsToRemove = saved
-      .filter((event) => !googleIds.has(event.google_event_id))
-      .map((event) => event.id);
-
+    const idsToRemove = saved.filter((event) => !googleIds.has(event.google_event_id)).map((event) => event.id);
     if (idsToRemove.length > 0) {
-      const { error: deleteError } = await supabase
-        .from("events")
-        .delete()
-        .in("id", idsToRemove);
-
+      const { error: deleteError } = await supabase.from("events").delete().in("id", idsToRemove);
       if (deleteError) {
         throw new Error(deleteError.message);
       }
+      changed = true;
+    }
+
+    // Anything saved from before tracking started doesn't count
+    const { data: early, error: earlyError } = await supabase
+      .from("events")
+      .delete()
+      .eq("tracked_calendar_id", calendar.id)
+      .lte("end_at", trackingStart.toISOString())
+      .select("id");
+    if (earlyError) {
+      throw new Error(earlyError.message);
+    }
+    if (early.length > 0) {
+      changed = true;
+    }
+
+    return changed;
+  }
+
+  const results = await Promise.all(calendarsResult.data.map(syncCalendar));
+
+  // Remember the time zone (so pages don't ask Google) and when this sync happened
+  const syncedAt = new Date().toISOString();
+  const { error: settingsError } = await supabase
+    .from("user_settings")
+    .upsert({ user_id: userId, time_zone: timeZone, last_synced_at: syncedAt }, { onConflict: "user_id" });
+  if (settingsError) {
+    throw new Error(settingsError.message);
+  }
+
+  return { status: "ok", timeZone, changed: results.some(Boolean), syncedAt };
+}
+
+// Sync, unless the last one was moments ago (force skips that check). If Google rejects
+// the cached token, try once more with a fresh one.
+export async function syncCalendars(userId: string, { force = false } = {}): Promise<SyncOutcome> {
+  if (!force) {
+    const supabase = await createClient();
+    const { data: settings } = await supabase.from("user_settings").select("time_zone, last_synced_at").maybeSingle();
+    if (
+      settings?.time_zone &&
+      settings.last_synced_at &&
+      Date.now() - Date.parse(settings.last_synced_at) < MIN_SECONDS_BETWEEN_SYNCS * 1000
+    ) {
+      return { status: "ok", timeZone: settings.time_zone, changed: false, syncedAt: settings.last_synced_at };
     }
   }
 
-  return { status: "ok", timeZone, week };
-}
-
-// Sync, and if Google rejects the cached token, try once more with a fresh one
-export async function syncRecentWeeks(userId: string): Promise<SyncResult> {
   try {
-    return await syncRecentWeeksOnce(userId);
+    return await syncOnce(userId, false);
   } catch (error) {
     if (error instanceof GoogleAuthError) {
-      return await syncRecentWeeksOnce(userId, true);
+      return await syncOnce(userId, true);
     }
     throw error;
   }
+}
+
+// Make the next sync run even if the last one was moments ago (after tracking a new
+// calendar, for example)
+export async function syncSoon(userId: string) {
+  const supabase = await createClient();
+  const { error } = await supabase.from("user_settings").update({ last_synced_at: null }).eq("user_id", userId);
+  if (error) {
+    throw new Error(error.message);
+  }
+}
+
+// What a page needs before it can show anything: the user's time zone, saved by the last
+// sync. Only the very first visit (nothing synced yet) waits for a sync.
+export async function loadCalendarContext(userId: string): Promise<SyncResult> {
+  const supabase = await createClient();
+  const { data: settings, error } = await supabase.from("user_settings").select("time_zone").maybeSingle();
+  if (error) {
+    throw new Error(error.message);
+  }
+
+  let timeZone = settings?.time_zone ?? null;
+  if (!timeZone) {
+    const outcome = await syncCalendars(userId, { force: true });
+    if (outcome.status === "reconnect") {
+      return outcome;
+    }
+    timeZone = outcome.timeZone;
+  }
+  return { status: "ok", timeZone, week: getCurrentWeek(timeZone) };
 }

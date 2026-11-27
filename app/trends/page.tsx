@@ -2,7 +2,7 @@ import { redirect } from "next/navigation";
 import AppHeader from "@/components/app-header";
 import ReconnectGoogle from "@/components/reconnect-google";
 import { createClient } from "@/lib/supabase/server";
-import { syncRecentWeeks, type SyncResult } from "@/lib/sync-events";
+import { loadCalendarContext, type SyncResult } from "@/lib/sync-events";
 import { loadTrends } from "@/lib/trends";
 import { loadWeekPlan } from "@/lib/week-plan";
 import CategoriesTable from "./categories-table";
@@ -28,7 +28,7 @@ export default async function TrendsPage({ searchParams }: TrendsPageProps) {
   // Pull recent events from Google so this week is up to date. If it fails, still show the page.
   let sync: SyncResult | null = null;
   try {
-    sync = await syncRecentWeeks(user.id);
+    sync = await loadCalendarContext(user.id);
   } catch (error) {
     console.error("Sync failed:", error);
   }

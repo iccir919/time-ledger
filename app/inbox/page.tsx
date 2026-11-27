@@ -3,7 +3,7 @@ import { createClient } from "@/lib/supabase/server";
 import AppHeader from "@/components/app-header";
 import ReconnectGoogle from "@/components/reconnect-google";
 import { formatHours, hoursBetween } from "@/lib/hours";
-import { syncRecentWeeks, type SyncResult } from "@/lib/sync-events";
+import { loadCalendarContext, type SyncResult } from "@/lib/sync-events";
 import { formatWeekRange, getWeek } from "@/lib/week";
 import InboxWeek, { type InboxCategoryGroup, type InboxRow } from "./inbox-week";
 
@@ -26,7 +26,7 @@ export default async function InboxPage() {
   // Sync first so the inbox matches Google
   let sync: SyncResult | null = null;
   try {
-    sync = await syncRecentWeeks(user.id);
+    sync = await loadCalendarContext(user.id);
   } catch (error) {
     console.error("Sync failed:", error);
   }

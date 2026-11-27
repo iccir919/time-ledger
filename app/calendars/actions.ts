@@ -3,6 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
+import { syncSoon } from "@/lib/sync-events";
 import {
   createGoogleCalendar,
   getGoogleTimeZone,
@@ -37,8 +38,9 @@ function revalidateEverywhere() {
 
 export type SaveResult = { error?: string };
 
-// Check or uncheck one of the user's calendars. Unchecking stops tracking it,
-// and its saved events go with it (they come back on the next sync if it's checked again).
+// Check or uncheck one of the user's calendars. Checking starts tracking it from the start of
+// this week (its events come in on the next sync, which this makes happen right away).
+// Unchecking stops tracking it, and its saved events go with it.
 export async function setCalendarTracked(
   calendarId: string,
   name: string,
@@ -59,6 +61,15 @@ export async function setCalendarTracked(
 
   if (error) {
     return { error: error.message };
+  }
+
+  if (tracked) {
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+    if (user) {
+      await syncSoon(user.id);
+    }
   }
 
   revalidateEverywhere();
@@ -303,6 +314,8 @@ export async function createLogCalendar() {
   if (trackError) {
     throw new Error(trackError.message);
   }
+  // Bring its events in on the next sync, even if one just ran
+  await syncSoon(user.id);
 
   revalidatePath("/calendars");
   revalidatePath("/budget");

@@ -2,7 +2,7 @@ import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import AppHeader from "@/components/app-header";
 import ReconnectGoogle from "@/components/reconnect-google";
-import { syncRecentWeeks, type SyncResult } from "@/lib/sync-events";
+import { loadCalendarContext, type SyncResult } from "@/lib/sync-events";
 import { getWeek } from "@/lib/week";
 import Overview from "./overview";
 
@@ -23,7 +23,7 @@ export default async function Dashboard() {
   // Pull recent events from Google. If it fails, still show the page.
   let sync: SyncResult | null = null;
   try {
-    sync = await syncRecentWeeks(user.id);
+    sync = await loadCalendarContext(user.id);
   } catch (error) {
     console.error("Sync failed:", error);
   }
