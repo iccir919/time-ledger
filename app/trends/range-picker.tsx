@@ -1,4 +1,4 @@
-import Switch from "@/components/ui/switch";
+import Switch from "@/components/switch";
 import type { RangeKey, TrendRange } from "@/lib/trends";
 
 // The range choices, as links (?range=4w). Only ranges with enough history are offered,

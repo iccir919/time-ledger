@@ -3,7 +3,7 @@
 import { useCallback, useSyncExternalStore } from "react";
 import Link from "next/link";
 import DayTimeline from "@/components/day-timeline";
-import Switch from "@/components/ui/switch";
+import Switch from "@/components/switch";
 import { formatHours } from "@/lib/hours";
 import type { ColoredCategoryGroup } from "@/app/budget/calendar-sidebar";
 import WeekCalendar, { type CalendarBlock, type CalendarDay } from "@/app/budget/week-calendar";

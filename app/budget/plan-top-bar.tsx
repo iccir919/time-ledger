@@ -1,5 +1,5 @@
 import Link from "next/link";
-import Switch, { type SwitchOption } from "@/components/ui/switch";
+import Switch, { type SwitchOption } from "@/components/switch";
 import { formatWeekRange, type MonthGrid, type NavigableWeek } from "@/lib/week";
 
 export type PlanView = "calendar" | "grid";

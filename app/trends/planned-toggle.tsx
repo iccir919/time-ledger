@@ -1,6 +1,6 @@
 "use client";
 
-import Switch from "@/components/ui/switch";
+import Switch from "@/components/switch";
 import { useShowPlanned } from "./use-show-planned";
 
 // Done | Done + planned, next to the range picker
