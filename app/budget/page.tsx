@@ -8,6 +8,7 @@ import { loadCalendarContext, type SyncResult } from "@/lib/sync-events";
 import { getMonthGrid, getWeekInRange, type Week } from "@/lib/week";
 import { PLAN_CALENDAR_NAME } from "@/lib/plan-calendar";
 import { loadPlanBlocks, nameKey } from "@/lib/plan-blocks";
+import { loadCalendarData } from "@/lib/calendar-data";
 import { combinePlans } from "@/lib/plan-math";
 import { copyLastWeekGoals } from "./actions";
 import { createPlanCalendar } from "@/app/calendars/actions";
@@ -113,7 +114,7 @@ type PlanProps = {
 async function Plan({ userId, timeZone, week, planStatus }: PlanProps) {
   const supabase = await createClient();
 
-  const [groupsResult, goalsResult, previousGoalsResult, eventsResult, settingsResult, dayPlansResult] =
+  const [groupsResult, goalsResult, previousGoalsResult, eventsResult, settingsResult, dayPlansResult, calendar] =
     await Promise.all([
       supabase
         .from("category_groups")
@@ -141,6 +142,8 @@ async function Plan({ userId, timeZone, week, planStatus }: PlanProps) {
         .select("category_id, plan_date, planned_hours")
         .gte("plan_date", week.days[0].date)
         .lte("plan_date", week.days[week.days.length - 1].date),
+      // The week's events and plan blocks as calendar blocks, for the day card above the grid
+      loadCalendarData(userId, timeZone, week),
     ]);
 
   if (groupsResult.error) {
@@ -391,6 +394,7 @@ async function Plan({ userId, timeZone, week, planStatus }: PlanProps) {
         days={days}
         today={week.today}
         goals={weekGoals}
+        blocks={calendar.blocks}
         // The week's categorized events, for totals that count overlapping time once
         doneIntervals={eventsResult.data
           .filter((event) => event.category_id)

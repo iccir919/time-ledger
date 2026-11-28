@@ -2,6 +2,7 @@
 
 import { useCallback, useState } from "react";
 import Link from "next/link";
+import DayTimeline from "@/components/day-timeline";
 import { clockHours, overlapNote } from "@/lib/clock-time";
 import { directionOf, goalProgress, overLimits, type GoalDirection } from "@/lib/goals";
 import { formatHours } from "@/lib/hours";
@@ -9,8 +10,8 @@ import type { WeekGoals } from "@/lib/week-goals";
 import { saveDayPlan } from "./actions";
 import CalendarSidebar from "./calendar-sidebar";
 import PlanBlockDialog, { type BlockDraft } from "./plan-block-dialog";
-import { useHiddenCategories } from "./use-hidden-categories";
-import { draftAt } from "./week-calendar";
+import { UNCATEGORIZED, useHiddenCategories } from "./use-hidden-categories";
+import { draftAt, type CalendarBlock } from "./week-calendar";
 
 // Plan → Grid: the week's numbers. The totals, then each category's week ("6 / 21h") and the
 // hours per day: done on past days, a field to type the plan on today and later days. Goals
@@ -48,6 +49,8 @@ type WeekGridProps = {
   today: string;
   // Each category's goal and the week's progress, the same numbers the sidebar shows
   goals: WeekGoals;
+  // The week's events and plan blocks, for the day card above the grid
+  blocks: CalendarBlock[];
   // The week's categorized events, so totals can count overlapping time once
   doneIntervals: { categoryId: string; startMs: number; endMs: number }[];
   // Hours keyed by "<categoryId>:<date>":
@@ -158,6 +161,7 @@ export default function WeekGrid({
   days,
   today,
   goals,
+  blocks,
   doneIntervals,
   actual,
   typed,
@@ -239,11 +243,12 @@ export default function WeekGrid({
       return { id: row.id, color: row.color, done, ahead: Math.min(row.ahead, row.goal - done) };
     });
 
-  // Phones: the day the rows show. Starts on today, or the first day of another week.
-  const [phoneDate, setPhoneDate] = useState(() =>
+  // The day picked: the day card above the grid shows it, and on phones the rows show it.
+  // Starts on today, or the first day of another week.
+  const [selectedDate, setSelectedDate] = useState(() =>
     days.some((day) => day.date === today) ? today : days[0].date
   );
-  const phoneDay = days.find((day) => day.date === phoneDate) ?? days[0];
+  const selectedDay = days.find((day) => day.date === selectedDate) ?? days[0];
 
   // "+ Add" (in the sidebar): today at the next full hour, or 9 AM on the first day
   const [draft, setDraft] = useState<BlockDraft | null>(null);
@@ -294,7 +299,8 @@ export default function WeekGrid({
   }
 
   // One category on one day: what happened (past), or a field to type the plan (today and later)
-  function dayCell(category: GridCategory, day: GridDay) {
+  // `picked` outlines the cell when its day is the one in the day card (wide layout only)
+  function dayCell(category: GridCategory, day: GridDay, picked = false) {
     const key = cellKey(category.id, day.date);
     const kind = kindOf(day.date);
     const { goal, direction } = goalOf(category.id);
@@ -309,6 +315,7 @@ export default function WeekGrid({
           planned={plannedAt(key)}
           goal={goal}
           direction={direction}
+          picked={picked}
           doneBefore={days
             .filter((d) => d.date < day.date)
             .reduce((sum, d) => sum + actualAt(cellKey(category.id, d.date)), 0)}
@@ -321,9 +328,9 @@ export default function WeekGrid({
       <div
         key={day.date}
         onClick={(event) => event.currentTarget.querySelector("input")?.focus()}
-        className={`flex h-14 cursor-pointer flex-col items-center justify-center gap-1 rounded-md border border-stone-200 px-1 ${
+        className={`flex h-14 cursor-pointer flex-col items-center justify-center gap-1 rounded-md border px-1 ${
           kind === "today" ? "bg-accent-soft/60" : "bg-stone-100/70"
-        }`}
+        } ${picked ? "border-accent/50 ring-1 ring-accent/30" : "border-stone-200"}`}
       >
         <HoursField
           value={dayText[key] ?? ""}
@@ -439,10 +446,33 @@ export default function WeekGrid({
           )}
         </div>
 
+        {/* The picked day, by category: what happened, or what's planned */}
+        <section className="mt-4 rounded-xl border border-stone-200 bg-white p-4 sm:p-5">
+          <div className="flex items-baseline justify-between gap-4">
+            <h2 className="font-semibold">
+              {selectedDay.date === today ? `Today, ${selectedDay.weekday} ${selectedDay.dayNumber}` : selectedDay.label}
+            </h2>
+            <Link
+              href={`/budget?view=calendar&week=${selectedDay.date}`}
+              className="text-sm font-medium text-accent hover:underline"
+            >
+              Open in calendar
+            </Link>
+          </div>
+          <DayTimeline
+            day={selectedDay}
+            blocks={blocks.filter((block) => !hidden.has(block.categoryId ?? UNCATEGORIZED))}
+            groups={shownGroups}
+            nowMinutes={selectedDay.date === today ? nowMinutes : null}
+            timeZone={timeZone}
+            emptyText={kindOf(selectedDay.date) === "past" ? "Nothing done this day." : "Nothing planned yet."}
+          />
+        </section>
+
         {/* Wide: all 7 days as columns */}
         <div className="hidden @min-[51rem]:block">
           <p className="mt-6 text-sm text-stone-600">
-            Type the hours you plan for each day. They save on their own.
+            Type the hours you plan for each day; they save on their own. Click a day to see it above.
           </p>
 
           <div className="mt-3 rounded-xl border border-stone-200 bg-white px-4 pb-4">
@@ -452,17 +482,23 @@ export default function WeekGrid({
                 <span />
                 <span className="pl-1">Week</span>
                 {days.map((day) => (
-                  // Opens this week in the calendar
-                  <Link
+                  // Shows this day in the day card above
+                  <button
                     key={day.date}
-                    href={`/budget?view=calendar&week=${day.date}`}
-                    title={`Open ${day.label} in the calendar`}
+                    type="button"
+                    onClick={() => setSelectedDate(day.date)}
+                    aria-pressed={day.date === selectedDate}
+                    title={`See ${day.label} above`}
                     className={`rounded-md py-1.5 text-center text-base font-medium transition-colors ${
-                      day.date === today ? "bg-accent-soft font-semibold text-accent" : "text-stone-600 hover:bg-stone-200/70"
+                      day.date === selectedDate
+                        ? "bg-accent-soft font-semibold text-accent ring-1 ring-accent/40"
+                        : day.date === today
+                          ? "font-semibold text-accent hover:bg-stone-200/70"
+                          : "text-stone-600 hover:bg-stone-200/70"
                     }`}
                   >
                     {day.weekday} {day.dayNumber}
-                  </Link>
+                  </button>
                 ))}
               </div>
             </div>
@@ -477,7 +513,7 @@ export default function WeekGrid({
                       <span className="truncate">{category.name}</span>
                     </span>
                     <span className="pl-1 text-sm tabular-nums">{weekNumbers(category)}</span>
-                    {days.map((day) => dayCell(category, day))}
+                    {days.map((day) => dayCell(category, day, day.date === selectedDate))}
                   </div>
                 ))}
               </div>
@@ -503,7 +539,7 @@ export default function WeekGrid({
         <div className="@min-[51rem]:hidden">
           <div className="mt-4 grid grid-cols-7 gap-1" role="tablist" aria-label="Choose a day">
             {days.map((day) => {
-              const isSelected = day.date === phoneDate;
+              const isSelected = day.date === selectedDate;
               const isToday = day.date === today;
               return (
                 <button
@@ -511,7 +547,7 @@ export default function WeekGrid({
                   type="button"
                   role="tab"
                   aria-selected={isSelected}
-                  onClick={() => setPhoneDate(day.date)}
+                  onClick={() => setSelectedDate(day.date)}
                   className={`rounded-lg border py-1.5 text-center ${
                     isSelected ? "border-accent bg-accent-soft" : "border-transparent hover:bg-stone-100"
                   }`}
@@ -526,9 +562,9 @@ export default function WeekGrid({
             })}
           </div>
           <p className="mt-2 text-xs text-stone-500">
-            {kindOf(phoneDay.date) === "past"
-              ? `${phoneDay.label}: done, and what was planned. Tap a row's day to open it in the calendar.`
-              : `${kindOf(phoneDay.date) === "today" ? "Today" : phoneDay.label}: type the hours you plan.`}
+            {kindOf(selectedDay.date) === "past"
+              ? `${selectedDay.label}: done, and what was planned. Tap a row's day to open it in the calendar.`
+              : `${kindOf(selectedDay.date) === "today" ? "Today" : selectedDay.label}: type the hours you plan.`}
           </p>
 
           <div className="mt-2 rounded-xl border border-stone-200 bg-white px-4 pb-2">
@@ -547,13 +583,13 @@ export default function WeekGrid({
                       </div>
                       <p className="mt-0.5 pl-4.5 text-xs tabular-nums">{weekNumbers(category)}</p>
                     </div>
-                    {dayCell(category, phoneDay)}
+                    {dayCell(category, selectedDay)}
                   </div>
                 ))}
               </div>
             ))}
             {(() => {
-              const { future, total } = dayTotal(phoneDay);
+              const { future, total } = dayTotal(selectedDay);
               return (
                 <p className="flex justify-between border-t border-stone-200 pt-2 text-sm font-semibold">
                   <span>{future ? "Planned" : "Done"} this day</span>
@@ -691,9 +727,12 @@ function PastCell({
   goal,
   direction,
   doneBefore,
+  picked,
 }: {
   href: string;
   label: string;
+  // Its day is the one in the day card
+  picked?: boolean;
   done: number;
   planned: number;
   // The week's goal (null when there isn't one), its direction, and what was done earlier this week
@@ -730,7 +769,9 @@ function PastCell({
     <Link
       href={href}
       aria-label={`${label}: ${main}${note ? `, ${note.text}` : ""}. Open in the calendar.`}
-      className="flex h-14 flex-col items-center justify-center gap-1 rounded-md border border-stone-200 bg-stone-100/70 px-1 text-center tabular-nums leading-tight transition-colors hover:bg-stone-200/70"
+      className={`flex h-14 flex-col items-center justify-center gap-1 rounded-md border bg-stone-100/70 px-1 text-center tabular-nums leading-tight transition-colors hover:bg-stone-200/70 ${
+        picked ? "border-accent/50 ring-1 ring-accent/30" : "border-stone-200"
+      }`}
     >
       <span className={`whitespace-nowrap text-sm ${mainTone}`}>{main}</span>
       {note && <span className={`block max-w-full truncate text-[11px] leading-3.5 ${note.tone}`}>{note.text}</span>}

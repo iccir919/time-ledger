@@ -1,10 +1,10 @@
 import Link from "next/link";
-import WeekCalendar from "@/app/budget/week-calendar";
 import GoalBar from "@/components/goal-bar";
 import GoalStatusLabel from "@/components/goal-status-label";
 import { loadCalendarData } from "@/lib/calendar-data";
 import { directionOf, goalProgress, goalStatus, overLimits } from "@/lib/goals";
 import { clockHours, overlapNote } from "@/lib/clock-time";
+import TodayCard from "./today-card";
 import { formatHours, hoursWithin } from "@/lib/hours";
 import { combinePlans, hoursByDay, sumByCategory } from "@/lib/plan-math";
 import { createClient } from "@/lib/supabase/server";
@@ -16,9 +16,6 @@ type OverviewProps = {
   timeZone: string;
   week: Week;
 };
-
-// How tall the Today calendar is before it scrolls (about 12 hours)
-const TODAY_CALENDAR_HEIGHT = 420;
 
 // The dashboard: how today and this week are going, at a glance
 export default async function Overview({ userId, timeZone, week }: OverviewProps) {
@@ -254,7 +251,7 @@ export default async function Overview({ userId, timeZone, week }: OverviewProps
             )}
           </div>
           <div className="mt-3 flex flex-wrap gap-x-5 gap-y-1 text-sm text-stone-600">
-            {spent.slice(0, 3).map((category) => (
+            {spent.map((category) => (
               <span key={category.id} className="flex items-center gap-2">
                 <span className="size-2.5 rounded-full" style={{ backgroundColor: category.color }} />
                 {category.name}
@@ -267,43 +264,23 @@ export default async function Overview({ userId, timeZone, week }: OverviewProps
                 </span>
               </span>
             ))}
-            {spent.length > 3 && <span className="text-stone-400">and {spent.length - 3} more</span>}
           </div>
         </section>
       )}
 
       <div className="mt-4 grid items-start gap-4 md:grid-cols-2">
-        {/* Today: the calendar for today, where you can add and edit plan blocks */}
-        <section className="rounded-xl border border-stone-200 bg-white p-5">
-          <div className="flex items-baseline justify-between gap-4">
-            <h2 className="font-semibold">Today</h2>
-            <Link href="/budget?view=calendar" className="text-sm font-medium text-accent hover:underline">
-              Whole week
-            </Link>
-          </div>
-          <p className="mt-1 text-sm text-stone-500">
-            {formatHours(doneToday)} done
-            {plannedLeft > 0 && <> · {formatHours(plannedLeft)} planned left</>}
-          </p>
-
-          <WeekCalendar
-            days={[todayDay]}
-            today={week.today}
-            mobileDates={[week.today]}
-            nowMinutes={calendar.nowMinutes}
-            blocks={calendar.blocks}
-            canAddBlocks={calendar.hasPlanCalendar}
-            canLog={calendar.hasLogCalendar}
-            groups={calendar.groups}
-            timeZone={timeZone}
-            scrollHeight={TODAY_CALENDAR_HEIGHT}
-            headerHref="/budget?view=calendar"
-          />
-          <p className="mt-2 text-xs text-stone-400">
-            Plan on the left, tracked on the right.
-            {(calendar.hasPlanCalendar || calendar.hasLogCalendar) && " Click an empty spot to add time."}
-          </p>
-        </section>
+        {/* Today: as a calendar, or by category (a switch on the card picks) */}
+        <TodayCard
+          day={todayDay}
+          nowMinutes={calendar.nowMinutes}
+          blocks={calendar.blocks}
+          canAddBlocks={calendar.hasPlanCalendar}
+          canLog={calendar.hasLogCalendar}
+          groups={calendar.groups}
+          timeZone={timeZone}
+          doneToday={doneToday}
+          plannedLeft={plannedLeft}
+        />
 
         <div className="space-y-4">
           {/* Needs attention: only things you can act on */}
