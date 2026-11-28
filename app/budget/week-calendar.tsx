@@ -2,6 +2,8 @@
 
 import { useCallback, useEffect, useRef, useState, type MouseEvent } from "react";
 import Link from "next/link";
+import { clockHours } from "@/lib/clock-time";
+import { formatHours } from "@/lib/hours";
 import CalendarSidebar, { type ColoredCategoryGroup, type SidebarGoalsData } from "./calendar-sidebar";
 import PlanBlockDialog, { type BlockDraft } from "./plan-block-dialog";
 import { UNCATEGORIZED, useHiddenCategories } from "./use-hidden-categories";
@@ -211,6 +213,24 @@ export default function WeekCalendar({
     ? blocks.filter((block) => !hidden.has(block.categoryId ?? UNCATEGORIZED))
     : blocks;
   const planBlocks = shown.filter((block) => block.kind === "plan");
+
+  // On the Plan page, each day's header also shows its hours: done (overlaps counted once),
+  // plus what's still planned
+  const daySummaries = withSidebar
+    ? days.map((day) => {
+        // Planned time still ahead: all of a later day, the rest of today, none of a past day
+        const aheadFrom =
+          day.date < today ? day.endMs : day.date === today && nowMinutes !== null ? day.startMs + nowMinutes * 60_000 : day.startMs;
+        return {
+          done: clockHours(
+            shown.filter((block) => block.kind === "tracked"),
+            day.startMs,
+            day.endMs
+          ),
+          planned: clockHours(planBlocks, aheadFrom, day.endMs),
+        };
+      })
+    : null;
   const trackedBlocks = shown.filter((block) => block.kind === "tracked");
   const hours = Array.from({ length: 24 }, (_, hour) => hour);
 
@@ -311,6 +331,7 @@ export default function WeekCalendar({
                     {day.weekday} {day.dayNumber}
                   </>
                 )}
+                {daySummaries && <DaySummary {...daySummaries[days.indexOf(day)]} />}
               </div>
             ))}
           </div>
@@ -394,5 +415,24 @@ export default function WeekCalendar({
         />
       )}
     </div>
+  );
+}
+
+// Under a day's header on the Plan page: its done hours (and what's still planned), and a
+// thin bar in category colors on a scale shared with the other days
+function DaySummary({ done, planned }: { done: number; planned: number }) {
+  if (done === 0 && planned === 0) {
+    return <span className="mt-1 block text-[11px] font-normal text-stone-300">–</span>;
+  }
+  return (
+    <span className="mt-1 block text-[11px] font-normal tabular-nums text-stone-600">
+      {done > 0 ? formatHours(done) : ""}
+      {planned > 0 && (
+        <span className="text-stone-400">
+          {done > 0 ? " + " : ""}
+          {formatHours(planned)} plan
+        </span>
+      )}
+    </span>
   );
 }

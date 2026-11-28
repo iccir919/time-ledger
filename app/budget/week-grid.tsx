@@ -9,6 +9,7 @@ import { formatHours } from "@/lib/hours";
 import type { WeekGoals } from "@/lib/week-goals";
 import { saveDayPlan } from "./actions";
 import CalendarSidebar from "./calendar-sidebar";
+import SidebarGoals from "./sidebar-goals";
 import PlanBlockDialog, { type BlockDraft } from "./plan-block-dialog";
 import { UNCATEGORIZED, useHiddenCategories } from "./use-hidden-categories";
 import { draftAt, type CalendarBlock } from "./week-calendar";
@@ -299,8 +300,9 @@ export default function WeekGrid({
   }
 
   // One category on one day: what happened (past), or a field to type the plan (today and later)
-  // `picked` outlines the cell when its day is the one in the day card (wide layout only)
-  function dayCell(category: GridCategory, day: GridDay, picked = false) {
+  // `picked` outlines the cell when its day is the one in the day card (wide layout only).
+  // `inList` is the phone list: a bigger field with no tile around it.
+  function dayCell(category: GridCategory, day: GridDay, picked = false, inList = false) {
     const key = cellKey(category.id, day.date);
     const kind = kindOf(day.date);
     const { goal, direction } = goalOf(category.id);
@@ -309,7 +311,7 @@ export default function WeekGrid({
       return (
         <PastCell
           key={day.date}
-          href={`/budget?view=calendar&week=${day.date}`}
+          onPick={() => setSelectedDate(day.date)}
           label={`${category.name}, ${day.label}`}
           done={actualAt(key)}
           planned={plannedAt(key)}
@@ -324,25 +326,36 @@ export default function WeekGrid({
     }
 
     return (
-      // A fixed size, so typing doesn't change it. Clicking anywhere on the tile types into it.
+      // A fixed size, so typing doesn't change it. Clicking anywhere on the tile picks its day
+      // and types into it. The number looks like plain text until then.
       <div
         key={day.date}
-        onClick={(event) => event.currentTarget.querySelector("input")?.focus()}
-        className={`flex h-14 cursor-pointer flex-col items-center justify-center gap-1 rounded-md border px-1 ${
-          kind === "today" ? "bg-accent-soft/60" : "bg-stone-100/70"
-        } ${picked ? "border-accent/50 ring-1 ring-accent/30" : "border-stone-200"}`}
+        onClick={(event) => {
+          setSelectedDate(day.date);
+          event.currentTarget.querySelector("input")?.focus();
+        }}
+        className={
+          inList
+            ? "flex cursor-pointer flex-col items-stretch gap-0.5"
+            : `flex h-14 cursor-pointer flex-col items-center justify-center gap-0.5 rounded-lg border px-1 transition-colors ${
+                kind === "today" ? "bg-accent-soft/40" : "bg-white"
+              } ${picked ? "border-accent/50 ring-1 ring-accent/30" : "border-stone-200 hover:border-stone-300"}`
+        }
       >
         <HoursField
           value={dayText[key] ?? ""}
           onChange={(value) => setDayText((current) => ({ ...current, [key]: value }))}
-          onFocus={() => setEditingKey(key)}
+          onFocus={() => {
+            setEditingKey(key);
+            setSelectedDate(day.date);
+          }}
           onBlur={() => saveDayField(category.id, day.date)}
           max={24}
           // A day with blocks but nothing typed shows the scheduled hours in gray
           placeholder={scheduledAt(key) > 0 ? num(scheduledAt(key)) : "–"}
           label={`${category.name}, ${day.label}: hours planned`}
           status={dayStatus[key]}
-          compact
+          size={inList ? "large" : "compact"}
         />
         <DayNote kind={kind} scheduled={scheduledAt(key)} done={actualAt(key)} />
       </div>
@@ -372,6 +385,8 @@ export default function WeekGrid({
     weekEndMs
   );
 
+  const weekStillOpen = days[days.length - 1].date >= today;
+
   return (
     <div className="mt-6 grid gap-6 lg:grid-cols-[13rem_minmax(0,1fr)]">
       <CalendarSidebar
@@ -382,8 +397,9 @@ export default function WeekGrid({
         timeZone={timeZone}
         today={today}
         miniMonth={{ initialMonth: days[3].date.slice(0, 7), selected: days.map((day) => day.date) }}
-        goals={{ goals, weekStart, weekStillOpen: days[days.length - 1].date >= today }}
+        goals={{ goals, weekStart, weekStillOpen }}
         showLegend={false}
+        goalsElsewhereOnPhones
       />
 
       <div className="@container min-w-0">
@@ -441,9 +457,55 @@ export default function WeekGrid({
             </div>
           ) : (
             <p className="min-w-64 flex-1 text-sm text-stone-500 md:border-l md:border-stone-100 md:pl-10">
-              Set a goal in the sidebar to see your progress here.
+              Set a goal to see your progress here.
             </p>
           )}
+
+          {/* Phones: the goals live here instead of a card of their own. Closed, the first few;
+              open, the full list to set them. */}
+          <details className="group basis-full border-t border-stone-100 pt-3 lg:hidden">
+            <summary className="cursor-pointer list-none [&::-webkit-details-marker]:hidden">
+              {goalRows.length > 0 && (
+                <span className="block space-y-1.5 group-open:hidden">
+                  {goalRows.slice(0, 3).map((row) => (
+                    <span key={row.id} className="flex items-center justify-between gap-3 text-sm">
+                      <span className="flex min-w-0 items-center gap-2">
+                        <span className="size-2 shrink-0 rounded-full" style={{ backgroundColor: row.color }} />
+                        <span className="truncate">{row.name}</span>
+                      </span>
+                      <span className="whitespace-nowrap tabular-nums text-stone-500">
+                        {num(row.done)} / {formatHours(row.goal)}
+                        {row.direction === "at_most" ? " max" : ""}
+                      </span>
+                    </span>
+                  ))}
+                  {goalRows.length > 3 && (
+                    <span className="block text-xs text-stone-400">{goalRows.length - 3} more</span>
+                  )}
+                </span>
+              )}
+              <span
+                className={`flex items-center justify-between text-sm font-medium text-accent ${
+                  goalRows.length > 0 ? "mt-2.5 group-open:mt-0" : ""
+                }`}
+              >
+                {goalRows.length > 0 ? "Edit goals" : "Set goals"}
+                <span aria-hidden="true" className="text-xs transition-transform group-open:rotate-180">
+                  ▾
+                </span>
+              </span>
+            </summary>
+            <div className="mt-3">
+              <SidebarGoals
+                groups={groups}
+                goals={goals}
+                weekStart={weekStart}
+                weekStillOpen={weekStillOpen}
+                hidden={hidden}
+                onToggle={toggle}
+              />
+            </div>
+          </details>
         </div>
 
         {/* The picked day, by category: what happened, or what's planned */}
@@ -472,7 +534,7 @@ export default function WeekGrid({
         {/* Wide: all 7 days as columns */}
         <div className="hidden @min-[51rem]:block">
           <p className="mt-6 text-sm text-stone-600">
-            Type the hours you plan for each day; they save on their own. Click a day to see it above.
+            Type the hours you plan for each day; they save on their own. Click any day or cell to see that day above.
           </p>
 
           <div className="mt-3 rounded-xl border border-stone-200 bg-white px-4 pb-4">
@@ -563,7 +625,7 @@ export default function WeekGrid({
           </div>
           <p className="mt-2 text-xs text-stone-500">
             {kindOf(selectedDay.date) === "past"
-              ? `${selectedDay.label}: done, and what was planned. Tap a row's day to open it in the calendar.`
+              ? `${selectedDay.label}: done, and what was planned.`
               : `${kindOf(selectedDay.date) === "today" ? "Today" : selectedDay.label}: type the hours you plan.`}
           </p>
 
@@ -574,7 +636,7 @@ export default function WeekGrid({
                 {group.categories.map((category) => (
                   <div
                     key={category.id}
-                    className="grid grid-cols-[minmax(0,1fr)_4.5rem] items-center gap-3 border-b border-stone-100 py-2 last:border-b-0"
+                    className="grid grid-cols-[minmax(0,1fr)_6rem] items-center gap-3 border-b border-stone-100 py-2 last:border-b-0"
                   >
                     <div className="min-w-0">
                       <div className="flex items-center gap-2">
@@ -583,7 +645,7 @@ export default function WeekGrid({
                       </div>
                       <p className="mt-0.5 pl-4.5 text-xs tabular-nums">{weekNumbers(category)}</p>
                     </div>
-                    {dayCell(category, selectedDay)}
+                    {dayCell(category, selectedDay, false, true)}
                   </div>
                 ))}
               </div>
@@ -642,7 +704,7 @@ type HoursFieldProps = {
   placeholder: string;
   label: string;
   status?: SaveStatus;
-  compact?: boolean;
+  size?: "compact" | "large";
 };
 
 // A number field for hours that saves when it loses focus (Enter does the same)
@@ -655,7 +717,7 @@ function HoursField({
   placeholder,
   label,
   status,
-  compact,
+  size,
 }: HoursFieldProps) {
   return (
     <div className="relative w-full">
@@ -677,8 +739,9 @@ function HoursField({
         maxLength={5}
         placeholder={placeholder}
         aria-label={label}
-        className={`w-full appearance-none rounded-md border bg-white text-right text-sm font-medium tabular-nums outline-none [-moz-appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none placeholder:font-normal placeholder:text-stone-400 focus:bg-white focus:ring-2 focus:ring-accent/30 ${
-          compact ? "py-0.5 pl-1 pr-4" : "py-1 pl-2 pr-5"
+        className={`w-full appearance-none rounded-md border bg-white text-right font-medium tabular-nums outline-none [-moz-appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none placeholder:font-normal placeholder:text-stone-400 focus:bg-white focus:ring-2 focus:ring-accent/30 ${
+          // Large is 16px text: smaller makes phones zoom in on the field
+          size === "large" ? "py-2 pl-2 pr-6 text-base" : size === "compact" ? "py-0.5 pl-1 pr-4 text-sm" : "py-1 pl-2 pr-5 text-sm"
         } ${
           status === "error" ? "border-red-400" : "border-stone-200"
         }`}
@@ -686,8 +749,8 @@ function HoursField({
       <span className="pointer-events-none absolute right-1.5 top-1/2 -translate-y-1/2 text-xs text-stone-400">
         h
       </span>
-      {/* Day fields are too small for the words; their red border shows a failed save */}
-      {status && !compact && (
+      {/* Day fields have a note under them instead; their red border shows a failed save */}
+      {status && !size && (
         <span
           className={`absolute -bottom-3.5 right-0 text-[10px] ${status === "error" ? "text-red-600" : "text-stone-400"}`}
         >
@@ -718,9 +781,9 @@ function DayNote({ kind, scheduled, done }: { kind: "today" | "future"; schedule
 
 // A past day for one category, in words: done, compared with the plan if there was one.
 // If this day took the week past its goal, it says so: "over limit" for an "at most"
-// goal, "extra" for an "at least" one. Clicking it opens that week in the calendar.
+// goal, "extra" for an "at least" one. Clicking it shows its day in the day card.
 function PastCell({
-  href,
+  onPick,
   label,
   done,
   planned,
@@ -729,7 +792,8 @@ function PastCell({
   doneBefore,
   picked,
 }: {
-  href: string;
+  // Picks this cell's day for the day card
+  onPick: () => void;
   label: string;
   // Its day is the one in the day card
   picked?: boolean;
@@ -766,15 +830,16 @@ function PastCell({
   }
 
   return (
-    <Link
-      href={href}
-      aria-label={`${label}: ${main}${note ? `, ${note.text}` : ""}. Open in the calendar.`}
-      className={`flex h-14 flex-col items-center justify-center gap-1 rounded-md border bg-stone-100/70 px-1 text-center tabular-nums leading-tight transition-colors hover:bg-stone-200/70 ${
+    <button
+      type="button"
+      onClick={onPick}
+      aria-label={`${label}: ${main}${note ? `, ${note.text}` : ""}. Show this day above.`}
+      className={`flex h-14 w-full flex-col items-center justify-center gap-0.5 rounded-lg border bg-stone-100/70 px-1 text-center tabular-nums leading-tight transition-colors hover:bg-stone-200/70 ${
         picked ? "border-accent/50 ring-1 ring-accent/30" : "border-stone-200"
       }`}
     >
       <span className={`whitespace-nowrap text-sm ${mainTone}`}>{main}</span>
       {note && <span className={`block max-w-full truncate text-[11px] leading-3.5 ${note.tone}`}>{note.text}</span>}
-    </Link>
+    </button>
   );
 }

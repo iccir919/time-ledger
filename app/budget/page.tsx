@@ -18,6 +18,7 @@ import type { WeekGoals } from "@/lib/week-goals";
 import { cookies } from "next/headers";
 import { VIEW_COOKIE } from "@/lib/plan-view";
 import RememberView from "./remember-view";
+import { buttonClasses } from "@/components/button";
 import CalendarView from "./calendar-view";
 import MonthGridView from "./month-grid-view";
 import PlanTopBar from "./plan-top-bar";
@@ -71,8 +72,9 @@ export default async function BudgetPage({ searchParams }: BudgetPageProps) {
     <div className="min-h-screen">
       <AppHeader email={user.email} />
 
-      <main className="mx-auto max-w-5xl px-6 py-12 xl:max-w-7xl 2xl:max-w-[88rem]">
-        <h1 className="text-2xl font-semibold tracking-tight">Plan</h1>
+      <main className="mx-auto max-w-5xl px-4 py-8 sm:px-6 sm:py-12 xl:max-w-7xl 2xl:max-w-[88rem]">
+        {/* With a week to show, the top bar has the title (and the view switch beside it) */}
+        {!(sync?.status === "ok" && week) && <h1 className="text-2xl font-semibold tracking-tight">Plan</h1>}
 
         {sync === null && (
           <p className="mt-10 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
@@ -340,7 +342,7 @@ async function Plan({ userId, timeZone, week, planStatus }: PlanProps) {
           </div>
           <form action={createPlanCalendar}>
             <input type="hidden" name="return_to" value={`/budget?view=grid&week=${week.weekStart}`} />
-            <button className="rounded-lg bg-accent px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-accent-hover">
+            <button className={buttonClasses("primary")}>
               {planMissing ? "Create a new Plan calendar" : "Create Plan calendar"}
             </button>
           </form>
@@ -384,7 +386,7 @@ async function Plan({ userId, timeZone, week, planStatus }: PlanProps) {
           <input type="hidden" name="week_start" value={week.weekStart} />
           <input type="hidden" name="previous_week_start" value={week.previousWeekStart} />
           <p className="text-sm text-stone-600">No goals for this week yet.</p>
-          <button className="rounded-md px-3 py-1.5 text-sm font-medium text-accent transition-colors hover:bg-accent-soft">
+          <button className={buttonClasses("secondary", "sm")}>
             Copy last week&apos;s goals
           </button>
         </form>

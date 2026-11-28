@@ -83,8 +83,9 @@ export default function SidebarGoals({ groups, goals, weekStart, weekStillOpen, 
 
   return (
     <div className="space-y-3 text-sm">
-      <div className="flex items-baseline justify-between">
-        <p className="font-medium">Goals</p>
+      {/* On phones the Goals card already has this heading and total */}
+      <div className="hidden items-baseline justify-between lg:flex">
+        <p className="font-semibold">Goals</p>
         {progress && (
           <p className="text-xs tabular-nums text-stone-500">
             {num(progress.done)} of {formatHours(progress.total)}

@@ -1,6 +1,8 @@
 import Link from "next/link";
+import { buttonClasses } from "@/components/button";
 import Switch, { type SwitchOption } from "@/components/switch";
 import { formatWeekRange, type MonthGrid, type NavigableWeek } from "@/lib/week";
+import { PHONE_ADD_SLOT } from "@/lib/plan-view";
 
 export type PlanView = "calendar" | "grid";
 export type CalendarRange = "week" | "month";
@@ -93,37 +95,43 @@ export default function PlanTopBar({ week, month, timeZone, view }: PlanTopBarPr
   ];
 
   return (
-    // Phones: the week and its arrows on one line, the two switches on the next
-    <div className="mt-4 flex flex-wrap items-center justify-between gap-x-4 gap-y-3">
-      <nav aria-label={isMonth ? "Choose a month" : "Choose a week"} className="flex min-w-0 items-center gap-1">
-        <Link
-          href={planHref({ view, range })}
-          className="mr-1 shrink-0 rounded-full border border-stone-300 bg-white px-3.5 py-1.5 text-sm font-medium text-stone-700 transition-colors hover:bg-stone-100 sm:mr-2 sm:px-4"
-        >
-          Today
-        </Link>
-
-        {[previous, next].map((arrow, index) =>
-          arrow.show ? (
-            <Link key={arrow.label} href={arrow.href} aria-label={arrow.label} className={squareButton}>
-              {index === 0 ? "‹" : "›"}
-            </Link>
-          ) : (
-            <span key={arrow.label} aria-hidden="true" className={disabledSquareButton}>
-              {index === 0 ? "‹" : "›"}
-            </span>
-          )
-        )}
-
-        <span className="ml-1 truncate text-base font-medium sm:ml-2 sm:text-lg">
-          {isMonth ? month.title : formatWeekRange(week, timeZone)}
-        </span>
-      </nav>
-
-      <div className="flex flex-wrap items-center gap-2 sm:gap-3">
-        <Switch label="Choose a range" options={rangeOptions} value={range} />
-        <Switch label="Choose a view" options={viewOptions} value={view} />
+    <>
+      {/* The title, and Calendar | Grid on the right. On phones "+ Add" joins them: the view
+          puts its button into the empty spot (see calendar-sidebar.tsx). */}
+      <div className="flex items-center justify-between gap-4">
+        <h1 className="text-2xl font-semibold tracking-tight">Plan</h1>
+        <div className="flex items-center gap-2">
+          <Switch label="Choose a view" options={viewOptions} value={view} iconsOnPhones />
+          <div id={PHONE_ADD_SLOT} className="lg:hidden" />
+        </div>
       </div>
-    </div>
+
+      {/* The week (or month) and its arrows, and Week | Month on the right */}
+      <div className="mt-4 flex flex-wrap items-center justify-between gap-x-4 gap-y-3">
+        <nav aria-label={isMonth ? "Choose a month" : "Choose a week"} className="flex min-w-0 items-center gap-1">
+          <Link href={planHref({ view, range })} className={`mr-1 sm:mr-2 ${buttonClasses("secondary", "sm")}`}>
+            Today
+          </Link>
+
+          {[previous, next].map((arrow, index) =>
+            arrow.show ? (
+              <Link key={arrow.label} href={arrow.href} aria-label={arrow.label} className={squareButton}>
+                {index === 0 ? "‹" : "›"}
+              </Link>
+            ) : (
+              <span key={arrow.label} aria-hidden="true" className={disabledSquareButton}>
+                {index === 0 ? "‹" : "›"}
+              </span>
+            )
+          )}
+
+          <span className="ml-1 truncate text-base font-medium sm:ml-2 sm:text-lg">
+            {isMonth ? month.title : formatWeekRange(week, timeZone)}
+          </span>
+        </nav>
+
+        <Switch label="Choose a range" options={rangeOptions} value={range} size="sm" />
+      </div>
+    </>
   );
 }

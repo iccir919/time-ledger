@@ -1,5 +1,6 @@
 "use client";
 
+import { buttonClasses } from "@/components/button";
 import Link from "next/link";
 import { useEffect, useState, useTransition, type FormEvent } from "react";
 import CategorySelect, { type CategoryGroup } from "@/components/category-select";
@@ -265,23 +266,16 @@ export default function PlanBlockDialog({
                 type="button"
                 onClick={handleDelete}
                 disabled={isBusy}
-                className="rounded-lg px-3 py-2 text-sm text-red-700 transition-colors hover:bg-red-50 disabled:opacity-60"
+                className={buttonClasses("danger")}
               >
                 {isDeleting ? "Deleting..." : "Delete"}
               </button>
             )}
             <div className="ml-auto flex gap-2">
-              <button
-                type="button"
-                onClick={onClose}
-                className="rounded-lg px-4 py-2 text-sm text-stone-600 transition-colors hover:bg-stone-100"
-              >
+              <button type="button" onClick={onClose} className={buttonClasses("secondary")}>
                 Cancel
               </button>
-              <button
-                disabled={isBusy}
-                className="rounded-lg bg-accent px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-accent-hover disabled:opacity-60"
-              >
+              <button disabled={isBusy} className={buttonClasses("primary")}>
                 {isSaving ? "Saving..." : isEditing ? "Save" : kind === "done" ? "Log it" : "Add"}
               </button>
             </div>

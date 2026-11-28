@@ -19,11 +19,20 @@ type SwitchProps<T extends string> = {
   label: string;
   // "sm" inside cards, "md" in page headers
   size?: "sm" | "md";
+  // Phones show just the icons (screen readers still get the words)
+  iconsOnPhones?: boolean;
 };
 
 // The app's one switch: a few options on a soft gray track, the chosen one raised in white.
 // Used for Calendar | Grid, Week | Month, Done | Done + planned, and the like.
-export default function Switch<T extends string>({ options, value, onChange, label, size = "md" }: SwitchProps<T>) {
+export default function Switch<T extends string>({
+  options,
+  value,
+  onChange,
+  label,
+  size = "md",
+  iconsOnPhones = false,
+}: SwitchProps<T>) {
   const sizing = size === "sm" ? "gap-1 px-2.5 py-0.5 text-xs" : "gap-1.5 px-3 py-1 text-sm";
 
   return (
@@ -36,7 +45,7 @@ export default function Switch<T extends string>({ options, value, onChange, lab
         const content = (
           <>
             {option.icon}
-            {option.label}
+            {iconsOnPhones && option.icon ? <span className="sr-only sm:not-sr-only">{option.label}</span> : option.label}
           </>
         );
         return option.href ? (
