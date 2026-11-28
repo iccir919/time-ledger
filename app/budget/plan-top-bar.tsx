@@ -94,12 +94,18 @@ export default function PlanTopBar({ week, month, timeZone, view }: PlanTopBarPr
     },
   ];
 
+  const rangeSwitch = <Switch label="Choose a range" options={rangeOptions} value={range} size="sm" />;
+
   return (
     <>
-      {/* The title, and Calendar | Grid on the right. On phones "+ Add" joins them: the view
-          puts its button into the empty spot (see calendar-sidebar.tsx). */}
-      <div className="flex items-center justify-between gap-4">
-        <h1 className="text-2xl font-semibold tracking-tight">Plan</h1>
+      {/* The title, and Calendar | Grid on the right. On phones Week | Month sits next to the
+          title and "+ Add" next to the switch, leaving the row below to the dates. The view puts
+          its "+ Add" into the empty spot (see calendar-sidebar.tsx). */}
+      <div className="flex items-center justify-between gap-3">
+        <div className="flex items-center gap-3">
+          <h1 className="text-2xl font-semibold tracking-tight">Plan</h1>
+          <div className="sm:hidden">{rangeSwitch}</div>
+        </div>
         <div className="flex items-center gap-2">
           <Switch label="Choose a view" options={viewOptions} value={view} iconsOnPhones />
           <div id={PHONE_ADD_SLOT} className="lg:hidden" />
@@ -130,7 +136,7 @@ export default function PlanTopBar({ week, month, timeZone, view }: PlanTopBarPr
           </span>
         </nav>
 
-        <Switch label="Choose a range" options={rangeOptions} value={range} size="sm" />
+        <div className="hidden sm:block">{rangeSwitch}</div>
       </div>
     </>
   );

@@ -101,7 +101,8 @@ export default function CalendarSidebar({
       {onAdd &&
         phoneAddSlot &&
         createPortal(
-          <button type="button" onClick={onAdd} className={buttonClasses("primary")}>
+          // Small, so it fits on the title row beside both switches
+          <button type="button" onClick={onAdd} className={buttonClasses("primary", "sm")}>
             + Add
           </button>,
           phoneAddSlot
