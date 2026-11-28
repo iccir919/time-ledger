@@ -1,5 +1,5 @@
 import Link from "next/link";
-import type { ReactNode } from "react";
+import Switch, { type SwitchOption } from "@/components/ui/switch";
 import { formatWeekRange, type MonthGrid, type NavigableWeek } from "@/lib/week";
 
 export type PlanView = "calendar" | "grid";
@@ -56,7 +56,7 @@ export default function PlanTopBar({ week, month, timeZone, view }: PlanTopBarPr
     ? { show: month.canGoForward, href: planHref({ view, range, date: month.nextMonth }), label: "Next month" }
     : { show: week.canGoForward, href: planHref({ view, date: week.nextWeekStart }), label: "Next week" };
 
-  const views: { key: PlanView; label: string; icon: ReactNode }[] = [
+  const viewOptions: SwitchOption<PlanView>[] = [
     {
       key: "calendar",
       label: "Calendar",
@@ -66,6 +66,8 @@ export default function PlanTopBar({ week, month, timeZone, view }: PlanTopBarPr
           <path d="M3 8h14M7 2.5v3M13 2.5v3" />
         </svg>
       ),
+      // Switching views keeps the week or month you're looking at
+      href: planHref({ view: "calendar", range, date: isMonth ? month.monthKey : weekToKeep }),
     },
     {
       key: "grid",
@@ -78,15 +80,25 @@ export default function PlanTopBar({ week, month, timeZone, view }: PlanTopBarPr
           <rect x="11" y="11" width="6" height="6" rx="1" />
         </svg>
       ),
+      href: planHref({ view: "grid", range, date: isMonth ? month.monthKey : weekToKeep }),
+    },
+  ];
+  const rangeOptions: SwitchOption<CalendarRange>[] = [
+    { key: "week", label: "Week", href: planHref({ view, date: weekToKeep }) },
+    {
+      key: "month",
+      label: "Month",
+      href: planHref({ view, range: "month", date: isMonth ? month.monthKey : monthToKeep }),
     },
   ];
 
   return (
-    <div className="mt-4 flex flex-wrap items-center justify-between gap-4">
-      <nav aria-label={isMonth ? "Choose a month" : "Choose a week"} className="flex items-center gap-1">
+    // Phones: the week and its arrows on one line, the two switches on the next
+    <div className="mt-4 flex flex-wrap items-center justify-between gap-x-4 gap-y-3">
+      <nav aria-label={isMonth ? "Choose a month" : "Choose a week"} className="flex min-w-0 items-center gap-1">
         <Link
           href={planHref({ view, range })}
-          className="mr-2 rounded-full border border-stone-300 bg-white px-4 py-1.5 text-sm font-medium text-stone-700 transition-colors hover:bg-stone-100"
+          className="mr-1 shrink-0 rounded-full border border-stone-300 bg-white px-3.5 py-1.5 text-sm font-medium text-stone-700 transition-colors hover:bg-stone-100 sm:mr-2 sm:px-4"
         >
           Today
         </Link>
@@ -103,51 +115,14 @@ export default function PlanTopBar({ week, month, timeZone, view }: PlanTopBarPr
           )
         )}
 
-        <span className="ml-2 text-lg font-medium">
+        <span className="ml-1 truncate text-base font-medium sm:ml-2 sm:text-lg">
           {isMonth ? month.title : formatWeekRange(week, timeZone)}
         </span>
       </nav>
 
-      <div className="flex flex-wrap items-center gap-3">
-        {/* Week | Month, for both views */}
-        <nav aria-label="Choose a range" className="flex rounded-lg border border-stone-200 bg-white p-0.5 text-sm">
-            <Link
-              href={planHref({ view, date: weekToKeep })}
-              aria-current={!isMonth ? "page" : undefined}
-              className={`rounded-md px-3 py-1 transition-colors ${
-                !isMonth ? "bg-stone-100 font-medium text-stone-900" : "text-stone-500 hover:text-stone-900"
-              }`}
-            >
-              Week
-            </Link>
-            <Link
-              href={planHref({ view, range: "month", date: isMonth ? month.monthKey : monthToKeep })}
-              aria-current={isMonth ? "page" : undefined}
-              className={`rounded-md px-3 py-1 transition-colors ${
-                isMonth ? "bg-stone-100 font-medium text-stone-900" : "text-stone-500 hover:text-stone-900"
-              }`}
-            >
-              Month
-            </Link>
-          </nav>
-
-        {/* Calendar | Grid */}
-        <nav aria-label="Choose a view" className="grid grid-cols-2 rounded-xl bg-stone-200/70 p-1">
-          {views.map((option) => (
-            <Link
-              key={option.key}
-              // Switching views keeps the week or month you're looking at
-              href={planHref({ view: option.key, range, date: isMonth ? month.monthKey : weekToKeep })}
-              aria-current={view === option.key ? "page" : undefined}
-              className={`flex items-center justify-center gap-2 rounded-lg px-4 py-1.5 text-sm font-medium transition-colors ${
-                view === option.key ? "bg-white text-stone-900 shadow-sm" : "text-stone-500 hover:text-stone-900"
-              }`}
-            >
-              {option.icon}
-              {option.label}
-            </Link>
-          ))}
-        </nav>
+      <div className="flex flex-wrap items-center gap-2 sm:gap-3">
+        <Switch label="Choose a range" options={rangeOptions} value={range} />
+        <Switch label="Choose a view" options={viewOptions} value={view} />
       </div>
     </div>
   );

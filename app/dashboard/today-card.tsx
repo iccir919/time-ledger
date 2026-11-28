@@ -3,6 +3,7 @@
 import { useCallback, useSyncExternalStore } from "react";
 import Link from "next/link";
 import DayTimeline from "@/components/day-timeline";
+import Switch from "@/components/ui/switch";
 import { formatHours } from "@/lib/hours";
 import type { ColoredCategoryGroup } from "@/app/budget/calendar-sidebar";
 import WeekCalendar, { type CalendarBlock, type CalendarDay } from "@/app/budget/week-calendar";
@@ -80,24 +81,7 @@ export default function TodayCard({
       <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
         <div className="flex items-center gap-3">
           <h2 className="font-semibold">Today</h2>
-          <div role="radiogroup" aria-label="Show today as" className="flex rounded-full bg-stone-100 p-0.5">
-            {options.map((option) => (
-              <button
-                key={option.key}
-                type="button"
-                role="radio"
-                aria-checked={view === option.key}
-                onClick={() => setView(option.key)}
-                className={`rounded-full px-2.5 py-0.5 text-xs outline-none transition-colors focus-visible:ring-2 focus-visible:ring-accent/40 ${
-                  view === option.key
-                    ? "bg-white font-medium text-stone-900 shadow-sm"
-                    : "text-stone-500 hover:text-stone-800"
-                }`}
-              >
-                {option.label}
-              </button>
-            ))}
-          </div>
+          <Switch label="Show today as" size="sm" options={options} value={view} onChange={setView} />
         </div>
         <Link href="/budget?view=calendar" className="text-sm font-medium text-accent hover:underline">
           Whole week
