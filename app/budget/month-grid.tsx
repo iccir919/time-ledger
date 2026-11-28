@@ -4,7 +4,7 @@ import { useCallback, useState } from "react";
 import Link from "next/link";
 import GoalBar from "@/components/goal-bar";
 import GoalStatusLabel from "@/components/goal-status-label";
-import { goalStatus, type GoalStatus } from "@/lib/goals";
+import { directionOf, goalStatus, type GoalStatus } from "@/lib/goals";
 import { formatHours } from "@/lib/hours";
 import type { WeekGoal, WeekGoals } from "@/lib/week-goals";
 import CalendarSidebar, { type ColoredCategoryGroup, type SidebarGoalsData } from "./calendar-sidebar";
@@ -152,6 +152,63 @@ export default function MonthGrid({
     );
   }
 
+  // Phones: one small cell per week, colored by how the week went against its goal:
+  // teal met (or within a limit), rose over a limit, gray short. This week and later weeks
+  // aren't judged yet, unless this week already went over a limit.
+  function phoneCell(category: { id: string; name: string }, week: MonthGridWeek) {
+    const { goal, direction, done, ahead } = week.goals[category.id] ?? EMPTY;
+    const isFuture = !week.isPast && !week.isCurrent;
+    const when = week.isCurrent ? "this week" : `the week of ${week.label}`;
+    const label =
+      `${category.name}, ${when}: ${num(done)}h done` +
+      (goal !== null ? ` of ${formatHours(goal)}${direction === "at_most" ? " max" : ""}` : ", no goal") +
+      (!week.isPast && ahead > 0 ? `, ${num(ahead)}h planned` : "") +
+      ". Open this week.";
+
+    let tone = "border-stone-200 bg-white text-stone-900";
+    if (isFuture || goal === null) {
+      tone = "border-stone-200 bg-white text-stone-400";
+    } else if (directionOf(goal, direction) === "at_most") {
+      if (done > goal) {
+        tone = "border-transparent bg-rose-50 text-rose-700";
+      } else if (week.isPast) {
+        tone = "border-transparent bg-accent-soft text-accent";
+      }
+    } else if (done >= goal) {
+      tone = "border-transparent bg-accent-soft text-accent";
+    } else if (week.isPast) {
+      tone = "border-transparent bg-stone-100 text-stone-500";
+    }
+
+    // Later weeks show what's planned so far, if anything
+    const shown = isFuture ? ahead : done;
+    return (
+      <Link
+        key={week.weekStart}
+        href={`/budget?view=grid&week=${week.weekStart}`}
+        aria-label={label}
+        className={`rounded-md border py-1.5 text-center text-xs font-medium tabular-nums ${tone} ${
+          week.isCurrent ? "ring-1 ring-accent/50" : ""
+        }`}
+      >
+        {shown > 0 ? num(shown) : "–"}
+      </Link>
+    );
+  }
+
+  // The goal beside a category's name on phones: this week's, or else the latest week's that has one
+  function goalLabel(categoryId: string) {
+    const ordered = [...weeks.filter((week) => week.isCurrent), ...[...weeks].reverse()];
+    const entry = ordered.map((week) => week.goals[categoryId]).find((goal) => goal && goal.goal !== null);
+    if (!entry || entry.goal === null) {
+      return "no goal";
+    }
+    return directionOf(entry.goal, entry.direction) === "at_most"
+      ? `${formatHours(entry.goal)} max`
+      : `${formatHours(entry.goal)} goal`;
+  }
+  const phoneColumns = `repeat(${weeks.length},minmax(0,1fr))`;
+
   return (
     <div className="mt-6 grid gap-6 lg:grid-cols-[13rem_minmax(0,1fr)]">
       <CalendarSidebar
@@ -168,9 +225,39 @@ export default function MonthGrid({
 
       <div className="min-w-0">
         <p className="text-sm text-stone-600">
-          Each week against that week&apos;s goal. Click a week to open it.
+          Each week against that week&apos;s goal. <span className="hidden sm:inline">Click</span>
+          <span className="sm:hidden">Tap</span> a week to open it.
         </p>
-        <div className="mt-3 overflow-x-auto rounded-xl border border-stone-200 bg-white px-4 pb-4">
+
+        {/* Phones: each category's weeks in a row of small cells that fit the screen */}
+        <div className="mt-3 rounded-xl border border-stone-200 bg-white px-4 pb-2 pt-3 sm:hidden">
+          <div style={{ gridTemplateColumns: phoneColumns }} className="grid gap-1 pb-2 text-center text-[11px] text-stone-500">
+            {weeks.map((week) => (
+              <span key={week.weekStart} className={week.isCurrent ? "font-semibold text-accent" : ""}>
+                {week.label}
+              </span>
+            ))}
+          </div>
+          {shownGroups.map((group) =>
+            group.categories.map((category) => (
+              <div key={category.id} className="border-t border-stone-100 py-2.5">
+                <div className="mb-1.5 flex items-center justify-between gap-3 text-sm">
+                  <span className="flex min-w-0 items-center gap-2">
+                    <span className="size-2.5 shrink-0 rounded-full" style={{ backgroundColor: category.color }} />
+                    <span className="truncate">{category.name}</span>
+                  </span>
+                  <span className="whitespace-nowrap text-xs text-stone-500">{goalLabel(category.id)}</span>
+                </div>
+                <div style={{ gridTemplateColumns: phoneColumns }} className="grid gap-1">
+                  {weeks.map((week) => phoneCell(category, week))}
+                </div>
+              </div>
+            ))
+          )}
+        </div>
+
+        {/* Wider screens: the full table */}
+        <div className="mt-3 hidden overflow-x-auto rounded-xl border border-stone-200 bg-white px-4 pb-4 sm:block">
           <div className="min-w-[40rem]">
             {/* Week headers */}
             <div className="-mx-4 rounded-t-xl border-b border-stone-200 bg-stone-100 px-4 pt-3">
