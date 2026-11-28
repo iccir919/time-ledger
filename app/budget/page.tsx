@@ -19,6 +19,7 @@ import { cookies } from "next/headers";
 import { VIEW_COOKIE } from "@/lib/plan-view";
 import RememberView from "./remember-view";
 import CalendarView from "./calendar-view";
+import MonthGridView from "./month-grid-view";
 import PlanTopBar from "./plan-top-bar";
 
 type BudgetPageProps = {
@@ -60,9 +61,9 @@ export default async function BudgetPage({ searchParams }: BudgetPageProps) {
     sync?.status === "ok"
       ? getWeekInRange(sync.timeZone, weekParam, { weeksBack: 1, weeksAhead: Infinity })
       : null;
-  // The calendar can show a month instead; the grid is always a week
+  // Either view can show a month instead of a week (?range=month&month=2026-11)
   const month =
-    sync?.status === "ok" && view === "calendar" && range === "month"
+    sync?.status === "ok" && range === "month"
       ? getMonthGrid(sync.timeZone, monthParam)
       : null;
 
@@ -88,6 +89,8 @@ export default async function BudgetPage({ searchParams }: BudgetPageProps) {
 
             {view === "calendar" ? (
               <CalendarView userId={user.id} timeZone={sync.timeZone} week={week} month={month} />
+            ) : month ? (
+              <MonthGridView userId={user.id} timeZone={sync.timeZone} month={month} week={week} />
             ) : (
               <Plan
                 userId={user.id}

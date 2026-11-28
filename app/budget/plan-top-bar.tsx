@@ -33,9 +33,9 @@ function planHref({ view, range = "week", date }: { view: PlanView; range?: Cale
 }
 
 // The bar above both Plan views, like Google Calendar's: Today, ‹ ›, the week or month,
-// then Week | Month (calendar only) and the Calendar | Grid switch.
+// then Week | Month and the Calendar | Grid switch.
 export default function PlanTopBar({ week, month, timeZone, view }: PlanTopBarProps) {
-  const isMonth = view === "calendar" && month !== null;
+  const isMonth = month !== null;
   const range: CalendarRange = isMonth ? "month" : "week";
 
   // What to keep when switching: a month's first week, a week's month (the one its Thursday is in).
@@ -109,9 +109,8 @@ export default function PlanTopBar({ week, month, timeZone, view }: PlanTopBarPr
       </nav>
 
       <div className="flex flex-wrap items-center gap-3">
-        {/* Week | Month: only the calendar has a month */}
-        {view === "calendar" && (
-          <nav aria-label="Choose a range" className="flex rounded-lg border border-stone-200 bg-white p-0.5 text-sm">
+        {/* Week | Month, for both views */}
+        <nav aria-label="Choose a range" className="flex rounded-lg border border-stone-200 bg-white p-0.5 text-sm">
             <Link
               href={planHref({ view, date: weekToKeep })}
               aria-current={!isMonth ? "page" : undefined}
@@ -131,18 +130,14 @@ export default function PlanTopBar({ week, month, timeZone, view }: PlanTopBarPr
               Month
             </Link>
           </nav>
-        )}
 
-        {/* Calendar | Grid. The grid is always a week. */}
+        {/* Calendar | Grid */}
         <nav aria-label="Choose a view" className="grid grid-cols-2 rounded-xl bg-stone-200/70 p-1">
           {views.map((option) => (
             <Link
               key={option.key}
-              href={
-                option.key === view
-                  ? planHref({ view, range, date: isMonth ? month.monthKey : weekToKeep })
-                  : planHref({ view: option.key, date: weekToKeep })
-              }
+              // Switching views keeps the week or month you're looking at
+              href={planHref({ view: option.key, range, date: isMonth ? month.monthKey : weekToKeep })}
               aria-current={view === option.key ? "page" : undefined}
               className={`flex items-center justify-center gap-2 rounded-lg px-4 py-1.5 text-sm font-medium transition-colors ${
                 view === option.key ? "bg-white text-stone-900 shadow-sm" : "text-stone-500 hover:text-stone-900"
